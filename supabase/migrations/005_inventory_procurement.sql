@@ -1,0 +1,107 @@
+-- ============================================================================
+-- 005_inventory_procurement.sql
+-- Labels, finished goods, finished goods history, and purchase orders.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS label_inventory (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand_id      uuid NOT NULL REFERENCES brands(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  brand_name    text NOT NULL,
+  product_id    uuid NOT NULL REFERENCES products(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  product_name  text NOT NULL,
+  label_name    text NOT NULL DEFAULT 'Standard Label',
+  quantity      integer NOT NULL DEFAULT 0,
+  reorder_level integer NOT NULL DEFAULT 0,
+  notes         text,
+  is_active     boolean NOT NULL DEFAULT true,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT label_inventory_label_name_not_blank CHECK (length(btrim(label_name)) > 0),
+  CONSTRAINT label_inventory_quantity_nonnegative CHECK (quantity >= 0),
+  CONSTRAINT label_inventory_reorder_nonnegative CHECK (reorder_level >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS finished_goods (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  batch_id          uuid REFERENCES batches(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  brand_id          uuid NOT NULL REFERENCES brands(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  product_id        uuid NOT NULL REFERENCES products(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  batch_code        text NOT NULL,
+  brand_name        text NOT NULL,
+  product_name      text NOT NULL,
+  category          fg_category NOT NULL DEFAULT 'powder',
+  name              text NOT NULL DEFAULT '',
+  location          text NOT NULL DEFAULT '',
+  comments          text NOT NULL DEFAULT '',
+  powder_no         text,
+  rack_no           text,
+  weight_kg         numeric(12,4),
+  capsule_code      text,
+  bucket            text,
+  capsule_mg        numeric(10,4),
+  capsule_weight_kg numeric(12,4),
+  capsule_amount    integer,
+  capsule_status    text,
+  box_no            text,
+  bottle_total      integer,
+  expiry_date       date,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT finished_goods_batch_code_not_blank CHECK (length(btrim(batch_code)) > 0),
+  CONSTRAINT finished_goods_weight_nonnegative CHECK (weight_kg IS NULL OR weight_kg >= 0),
+  CONSTRAINT finished_goods_capsule_mg_nonnegative CHECK (capsule_mg IS NULL OR capsule_mg >= 0),
+  CONSTRAINT finished_goods_capsule_weight_nonnegative CHECK (capsule_weight_kg IS NULL OR capsule_weight_kg >= 0),
+  CONSTRAINT finished_goods_capsule_amount_nonnegative CHECK (capsule_amount IS NULL OR capsule_amount >= 0),
+  CONSTRAINT finished_goods_bottle_total_nonnegative CHECK (bottle_total IS NULL OR bottle_total >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS finished_goods_history (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  finished_good_id uuid NOT NULL REFERENCES finished_goods(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  change_source    fg_change_source NOT NULL DEFAULT 'auto',
+  change_type      text NOT NULL,
+  changes          jsonb NOT NULL DEFAULT '{}'::jsonb,
+  reason           text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT finished_goods_history_change_type_not_blank CHECK (length(btrim(change_type)) > 0),
+  CONSTRAINT finished_goods_history_changes_is_object CHECK (jsonb_typeof(changes) = 'object')
+);
+
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  po_number           text NOT NULL,
+  vendor_id           uuid NOT NULL REFERENCES vendors(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  vendor_name         text NOT NULL,
+  vendor_code         text NOT NULL,
+  order_type          text NOT NULL,
+  status              text NOT NULL DEFAULT 'given',
+  item_name           text NOT NULL DEFAULT '',
+  quantity            numeric(14,4) NOT NULL DEFAULT 0,
+  unit                text,
+  unit_price          numeric(14,4),
+  total_amount        numeric(14,4),
+  brand_id            uuid REFERENCES brands(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  brand_name          text,
+  product_id          uuid REFERENCES products(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  product_name        text,
+  raw_material_id     uuid REFERENCES raw_materials(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  raw_material_code   text,
+  raw_material_name   text,
+  label_inventory_id  uuid REFERENCES label_inventory(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  label_name          text,
+  location            text,
+  expected_date       date,
+  received_date       date,
+  notes               text,
+  posted_to_inventory boolean NOT NULL DEFAULT false,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT purchase_orders_po_number_not_blank CHECK (length(btrim(po_number)) > 0),
+  CONSTRAINT purchase_orders_vendor_name_not_blank CHECK (length(btrim(vendor_name)) > 0),
+  CONSTRAINT purchase_orders_vendor_code_not_blank CHECK (length(btrim(vendor_code)) > 0),
+  CONSTRAINT purchase_orders_order_type_valid CHECK (order_type IN ('raw_material', 'label', 'product', 'bottles_lids')),
+  CONSTRAINT purchase_orders_status_valid CHECK (status IN ('given', 'working', 'sent', 'received', 'canceled')),
+  CONSTRAINT purchase_orders_quantity_positive CHECK (quantity > 0),
+  CONSTRAINT purchase_orders_unit_price_nonnegative CHECK (unit_price IS NULL OR unit_price >= 0),
+  CONSTRAINT purchase_orders_total_amount_nonnegative CHECK (total_amount IS NULL OR total_amount >= 0)
+);

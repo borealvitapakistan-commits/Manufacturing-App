@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+backend/.venv/
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+
+# React / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/*.tsbuildinfo
+*.stdout.log
+*.stderr.log
+.dev-pids/
+
+# Editors and operating system
+.agents/
+.codex/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

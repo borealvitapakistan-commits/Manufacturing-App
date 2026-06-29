@@ -1,0 +1,1 @@
+"""Manufacturing API domain apps."""
