@@ -127,6 +127,7 @@ export interface CreateBrandInput {
 export interface ProductRawMaterial {
   id?: string
   sr: number
+  categoryId?: string | null
   rawMaterial: string
   rawMaterialCode: string | null
   rawMaterialId: string | null
@@ -134,9 +135,12 @@ export interface ProductRawMaterial {
   labelClaimMgPerUnit: number
 }
 
+export type ProductType = 'capsule' | 'tablets' | 'softgel' | 'liquid' | 'lozengers' | 'powder'
+
 export interface Product {
   id: string
   name: string
+  type?: ProductType
   npn?: string | null
   rm: ProductRawMaterial[]
   createdAt?: number
@@ -145,17 +149,23 @@ export interface Product {
 
 export interface CreateProductInput {
   name: string
+  type?: ProductType
   npn?: string | null
   rm: ProductRawMaterial[]
 }
 
 // Label Inventory Types
+export type LabelInventoryType = ProductType
+export type LabelDosageType = '60' | '90' | '120' | '180' | '240'
+
 export interface LabelInventory {
   id: string
   brandId: string
   brandName: string
   productId: string
   productName: string
+  type?: LabelInventoryType
+  dosageType?: LabelDosageType
   labelName: string
   quantity: number
   reorderLevel: number
@@ -168,6 +178,8 @@ export interface LabelInventory {
 export interface CreateLabelInventoryInput {
   brandId: string
   productId: string
+  type?: LabelInventoryType
+  dosageType?: LabelDosageType
   labelName?: string
   quantity: number
   reorderLevel?: number
@@ -183,12 +195,29 @@ export interface LabelStockValidationResult {
 }
 
 // Raw Material Types
+export interface RawMaterialCategory {
+  id: string
+  name: string
+  description?: string | null
+  isActive: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateRawMaterialCategoryInput {
+  id?: string
+  name: string
+  description?: string | null
+  isActive?: boolean
+}
+
 export interface RawMaterial {
   id: string
   code: string
   name: string
   qty: number
   qtyKg: number
+  categoryId?: string | null
   category?: string | null
   location?: string | null
   coaLink?: string | null
@@ -201,6 +230,7 @@ export interface RawMaterial {
 export interface CreateRawMaterialInput {
   name: string
   qty: number
+  categoryId?: string | null
   category?: string
   location?: string
   coaLink?: string | null

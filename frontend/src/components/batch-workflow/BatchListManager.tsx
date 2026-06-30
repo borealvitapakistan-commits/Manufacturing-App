@@ -11,8 +11,6 @@ import {
   Card,
   Button,
   Input,
-  Label,
-  Modal,
   Table,
   TableHeader,
   TableBody,
@@ -21,7 +19,6 @@ import {
   TableCell,
   TableEmpty,
   TableLoading,
-  TextArea,
   useToast
 } from '@/components/ui'
 import {
@@ -32,7 +29,6 @@ import {
   fetchNJPReports,
   fetchAssemblyReports,
   fetchBrands,
-  startBatchStage,
   deleteBatchCascade
 } from '@/lib/supabase/data'
 import {
@@ -70,41 +66,6 @@ interface BatchStageState {
   assembly: AssemblyReport | null
 }
 
-const STAGE_LABEL: Record<ManufacturingStage, string> = {
-  mixing: 'Mixing',
-  njp: 'NJP',
-  assembly: 'Assembly'
-}
-
-function todayInput(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function timeInput(): string {
-  return new Date().toTimeString().slice(0, 5)
-}
-
-function toDateMs(value: string): number | null {
-  if (!value) return null
-  const date = new Date(`${value}T00:00:00`)
-  return Number.isNaN(date.getTime()) ? null : date.getTime()
-}
-
-function formatBatchTime(value: string | null | undefined): string {
-  const time = String(value || '').trim()
-  if (!time) return '-'
-
-  const match = time.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/)
-  if (!match) return time
-
-  const hours = Number(match[1])
-  if (!Number.isFinite(hours)) return time
-
-  const period = hours >= 12 ? 'PM' : 'AM'
-  const displayHours = hours % 12 || 12
-  return `${displayHours}:${match[2]} ${period}`
-}
-
 function batchStatusLabel(batch: Batch, status: BatchStatus): string {
   if (batch.batchStatus) return batch.batchStatus
   if (status === 'mixingPending') return 'Batch Created'
@@ -125,136 +86,34 @@ function isStageDone(status: BatchStageState, stage: ManufacturingStage): boolea
   return status.hasAssembly
 }
 
-function canStartStage(status: BatchStageState, stage: ManufacturingStage): boolean {
-  if (isStageDone(status, stage)) return false
-  if (isStageInProgress(stage, getStageReport(status, stage))) return false
-  if (stage === 'mixing') return true
-  if (stage === 'njp') return status.hasMixing
-  return status.hasMixing && status.hasNJP
-}
-
-function stageRoute(batch: Batch, stage: ManufacturingStage): string {
-  return `/batches/${stage}?batchId=${batch.id}&brandId=${batch.brandId}`
-}
-
-function StageActionCell({
-  batch,
+function StageStatusCell({
   status,
-  stage,
-  onStart
+  stage
 }: {
-  batch: Batch
   status: BatchStageState
   stage: ManufacturingStage
-  onStart: (batch: Batch, stage: ManufacturingStage) => void
 }) {
   const report = getStageReport(status, stage)
   const done = isStageDone(status, stage)
   const inProgress = isStageInProgress(stage, report)
 
   if (done) {
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="success">Completed</Badge>
-        <Link href={stageRoute(batch, stage)}>
-          <Button size="sm" variant="subtle">Open</Button>
-        </Link>
-      </div>
-    )
+    return <Badge variant="success">Completed</Badge>
   }
 
   if (inProgress) {
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="warning">In progress</Badge>
-        <Link href={stageRoute(batch, stage)}>
-          <Button size="sm" variant="subtle">End</Button>
-        </Link>
-      </div>
-    )
+    return <Badge variant="warning">In progress</Badge>
   }
 
-  if (!canStartStage(status, stage)) {
+  if (stage === 'njp' && !status.hasMixing) {
     return <Badge variant="default">Waiting</Badge>
   }
 
-  return (
-    <Button size="sm" variant="secondary" onClick={() => onStart(batch, stage)}>
-      Start
-    </Button>
-  )
-}
-
-function StartStageModal({
-  batch,
-  stage,
-  onClose,
-  onSaved
-}: {
-  batch: Batch
-  stage: ManufacturingStage
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const { showToast } = useToast()
-  const [date, setDate] = useState(todayInput())
-  const [time, setTime] = useState(timeInput())
-  const [remarks, setRemarks] = useState('')
-  const [reason, setReason] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  async function handleStart() {
-    try {
-      setSaving(true)
-      await startBatchStage(batch.id, stage, {
-        startDate: toDateMs(date),
-        startTime: time || null,
-        remarks: remarks || null,
-        reason: reason || null
-      })
-      showToast({ message: `${STAGE_LABEL[stage]} started`, type: 'success' })
-      onSaved()
-    } catch (error) {
-      console.error('Failed to start stage:', error)
-      showToast({ message: `Failed to start ${STAGE_LABEL[stage]}`, type: 'error' })
-    } finally {
-      setSaving(false)
-    }
+  if (stage === 'assembly' && (!status.hasMixing || !status.hasNJP)) {
+    return <Badge variant="default">Waiting</Badge>
   }
 
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`Start ${STAGE_LABEL[stage]} - ${batch.batchCode}`}
-      className="max-w-lg"
-    >
-      <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <Label>Start Date</Label>
-            <Input type="date" value={date} onChange={event => setDate(event.target.value)} />
-          </div>
-          <div>
-            <Label>Start Time</Label>
-            <Input type="time" value={time} onChange={event => setTime(event.target.value)} />
-          </div>
-        </div>
-        <div>
-          <Label>Remarks</Label>
-          <TextArea rows={3} value={remarks} onChange={event => setRemarks(event.target.value)} />
-        </div>
-        <div>
-          <Label>Reason</Label>
-          <TextArea rows={2} value={reason} onChange={event => setReason(event.target.value)} />
-        </div>
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={handleStart} loading={saving}>Start {STAGE_LABEL[stage]}</Button>
-        </div>
-      </div>
-    </Modal>
-  )
+  return <Badge variant="warning">Ready</Badge>
 }
 
 export function BatchListManager() {
@@ -267,7 +126,6 @@ export function BatchListManager() {
   const [labelsReady, setLabelsReady] = useState(true)
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<{ batch: Batch; status: typeof statusMap[string] } | null>(null)
-  const [startTarget, setStartTarget] = useState<{ batch: Batch; stage: ManufacturingStage } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const { showToast } = useToast()
 
@@ -379,21 +237,6 @@ export function BatchListManager() {
 
   const selectedBrandName = brands.find((brand) => brand.id === selectedBrandId)?.name
   const hasFilters = searchTerm.trim().length > 0 || selectedBrandId.length > 0
-
-  function getNextRoute(status: BatchStatus, batchId: string, brandId: string): string {
-    const params = `?batchId=${batchId}&brandId=${brandId}`
-    switch (status) {
-      case 'mixingPending': return `/batches/mixing${params}`
-      case 'ngpPending': return `/batches/njp${params}`
-      case 'assemblyPending': return `/batches/assembly${params}`
-      case 'finalized': return `/batches/reports${params}`
-    }
-  }
-
-  function handleStageStarted() {
-    setStartTarget(null)
-    void loadData()
-  }
 
   async function handleDelete() {
     if (!deleteTarget) return
@@ -533,8 +376,6 @@ export function BatchListManager() {
               <TableHead>Dosage</TableHead>
               <TableHead>Containers</TableHead>
               <TableHead>Total Units</TableHead>
-              <TableHead>Time Start</TableHead>
-              <TableHead>Time End</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Current Stage</TableHead>
               <TableHead>Mixing</TableHead>
@@ -546,11 +387,11 @@ export function BatchListManager() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoading colSpan={16} />
+              <TableLoading colSpan={14} />
             ) : batches.length === 0 ? (
-              <TableEmpty colSpan={16} message="No batches yet. Create your first batch!" />
+              <TableEmpty colSpan={14} message="No batches yet. Create your first batch!" />
             ) : filteredBatches.length === 0 ? (
-              <TableEmpty colSpan={16} message="No batches match this search." />
+              <TableEmpty colSpan={14} message="No batches match this search." />
             ) : (
               filteredBatches.map(batch => {
                 const st = statusMap[batch.id] || {
@@ -572,38 +413,28 @@ export function BatchListManager() {
                     <TableCell>{batch.dosageForm}</TableCell>
                     <TableCell>{batch.containerCount}</TableCell>
                     <TableCell>{batch.totalUnits ?? '—'}</TableCell>
-                    <TableCell>{formatBatchTime(batch.startTime)}</TableCell>
-                    <TableCell>{formatBatchTime(batch.endTime)}</TableCell>
                     <TableCell>
-                      <Link href={getNextRoute(st.status, batch.id, batch.brandId)}>
-                        <Badge variant={st.hasAssembly ? 'success' : 'warning'}>
-                          {batchStatusLabel(batch, st.status)}
-                        </Badge>
-                      </Link>
+                      <Badge variant={st.hasAssembly ? 'success' : 'warning'}>
+                        {batchStatusLabel(batch, st.status)}
+                      </Badge>
                     </TableCell>
                     <TableCell>{batch.currentStage || st.status}</TableCell>
                     <TableCell>
-                      <StageActionCell
-                        batch={batch}
+                      <StageStatusCell
                         status={st}
                         stage="mixing"
-                        onStart={(target, stage) => setStartTarget({ batch: target, stage })}
                       />
                     </TableCell>
                     <TableCell>
-                      <StageActionCell
-                        batch={batch}
+                      <StageStatusCell
                         status={st}
                         stage="njp"
-                        onStart={(target, stage) => setStartTarget({ batch: target, stage })}
                       />
                     </TableCell>
                     <TableCell>
-                      <StageActionCell
-                        batch={batch}
+                      <StageStatusCell
                         status={st}
                         stage="assembly"
-                        onStart={(target, stage) => setStartTarget({ batch: target, stage })}
                       />
                     </TableCell>
                     <TableCell>
@@ -662,14 +493,6 @@ export function BatchListManager() {
         />
       )}
 
-      {startTarget && (
-        <StartStageModal
-          batch={startTarget.batch}
-          stage={startTarget.stage}
-          onClose={() => setStartTarget(null)}
-          onSaved={handleStageStarted}
-        />
-      )}
     </div>
   )
 }

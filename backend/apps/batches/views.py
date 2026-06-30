@@ -140,6 +140,20 @@ class StageStartView(APIView):
         return Response({"data": data}, status=status.HTTP_201_CREATED)
 
 
+class StageLifecycleUpdateView(APIView):
+    def put(self, request, item_id, stage):
+        serializer = StageLifecycleSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = StageLifecycleService.update_stage(
+            str(item_id),
+            str(stage),
+            serializer.validated_data,
+        )
+        return Response({"data": data})
+
+    patch = put
+
+
 class StageEndView(APIView):
     serializers = {
         "mixing": MixingSerializer,

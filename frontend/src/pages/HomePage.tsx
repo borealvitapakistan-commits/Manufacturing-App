@@ -3,18 +3,129 @@ import { Link } from 'react-router-dom'
 
 import { api } from '@/lib/api/client'
 
-const modules = [
-  ['/brands', 'Brands', 'Maintain brand codes, identity and status.', 'Master Data'],
-  ['/raw-materials', 'Raw Materials', 'Manage stock, locations and purchase costs.', 'Inventory'],
-  ['/labels', 'Labels', 'Track label stock by brand and product.', 'Inventory'],
-  ['/products', 'Products', 'Define formulas and label claims.', 'Master Data'],
-  ['/batches', 'Batches', 'Create and track production workflow stages.', 'Workflow'],
-  ['/finished-goods', 'Finished Goods', 'Track powder, capsule and bottle inventory.', 'Inventory'],
-  ['/employees', 'Employees', 'Attendance, work logs, loans and payroll.', 'HR'],
-  ['/expenses', 'Expenses', 'Manage books, ledger entries and carry balances.', 'Finance'],
-  ['/vendors', 'Vendors', 'Supplier details and purchase-order prefixes.', 'Master Data'],
-  ['/purchase-orders', 'Purchase Orders', 'Create multi-line documents and PDF exports.', 'Purchasing']
+interface ModuleLink {
+  href: string
+  title: string
+  description: string
+  type: string
+}
+
+const traceabilityModules: ModuleLink[] = [
+  {
+    href: '/mixing',
+    title: 'Mixing',
+    description: 'Trace raw material consumption and mixed powder movement.',
+    type: 'Traceability'
+  },
+  {
+    href: '/njp',
+    title: 'NJP',
+    description: 'Trace capsule filling after mixing is complete.',
+    type: 'Traceability'
+  },
+  {
+    href: '/batches',
+    title: 'Batch',
+    description: 'Create, modify and complete batch records. Assembly stays inside batch.',
+    type: 'Traceability'
+  },
+  {
+    href: '/finished-goods',
+    title: 'Finished Goods',
+    description: 'Trace finished inventory after batch completion.',
+    type: 'Traceability'
+  },
+  {
+    href: '/raw-materials',
+    title: 'Raw Materials',
+    description: 'Manage material stock, categories, vendors and COA references.',
+    type: 'Traceability'
+  },
+  {
+    href: '/products',
+    title: 'Products',
+    description: 'Define product formulas and material requirements.',
+    type: 'Traceability'
+  },
+  {
+    href: '/labels',
+    title: 'Labels',
+    description: 'Track label stock by brand, product, type and dosage.',
+    type: 'Traceability'
+  }
 ]
+
+const underDevelopmentModules: ModuleLink[] = [
+  {
+    href: '/brands',
+    title: 'Brands',
+    description: 'Brand setup remains available while the traceability flow is finalized.',
+    type: 'Under development'
+  },
+  {
+    href: '/vendors',
+    title: 'Vendors',
+    description: 'Supplier setup remains available for later purchasing workflows.',
+    type: 'Under development'
+  },
+  {
+    href: '/purchase-orders',
+    title: 'Purchase Orders',
+    description: 'Purchasing documents remain available while core traceability is connected.',
+    type: 'Under development'
+  },
+  {
+    href: '/employees',
+    title: 'Employees',
+    description: 'HR tools remain available but are outside the current traceability priority.',
+    type: 'Under development'
+  },
+  {
+    href: '/expenses',
+    title: 'Expenses',
+    description: 'Finance tools remain available but are outside the current traceability priority.',
+    type: 'Under development'
+  }
+]
+
+function ModuleRows({
+  modules,
+  development = false
+}: {
+  modules: ModuleLink[]
+  development?: boolean
+}) {
+  return (
+    <div className="mt-4 divide-y divide-slate-200 border-y border-slate-200">
+      {modules.map((item) => (
+        <Link
+          key={item.href}
+          to={item.href}
+          className={`grid gap-2 px-3 py-4 transition hover:bg-[#EFEFEF] sm:grid-cols-[180px_minmax(0,1fr)] sm:items-center ${
+            development ? 'text-slate-500' : ''
+          }`}
+        >
+          <p className={`text-xs font-semibold uppercase tracking-wide ${
+            development ? 'text-amber-700' : 'text-[#1D838D]'
+          }`}>
+            {item.type}
+          </p>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold text-slate-950">{item.title}</p>
+              <p className="mt-1 text-sm text-slate-600">{item.description}</p>
+            </div>
+            {development && (
+              <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                Under development
+              </span>
+            )}
+          </div>
+        </Link>
+      ))}
+    </div>
+  )
+}
 
 export default function HomePage() {
   const [status, setStatus] = useState('Checking Django backend…')
@@ -61,22 +172,13 @@ export default function HomePage() {
       </div>
 
       <section>
-        <h2 className="text-lg font-semibold">All Sections</h2>
-        <div className="mt-4 divide-y divide-slate-200 border-y border-slate-200">
-          {modules.map(([href, title, description, type]) => (
-            <Link
-              key={href}
-              to={href}
-              className="grid gap-2 px-3 py-4 transition hover:bg-[#EFEFEF] sm:grid-cols-[180px_minmax(0,1fr)] sm:items-center"
-            >
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{type}</p>
-              <div>
-                <p className="font-semibold">{title}</p>
-                <p className="mt-1 text-sm text-slate-600">{description}</p>
-              </div>
-            </Link>
-          ))}
-        </div>
+        <h2 className="text-lg font-semibold">Traceability Core</h2>
+        <ModuleRows modules={traceabilityModules} />
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold">Under Development</h2>
+        <ModuleRows modules={underDevelopmentModules} development />
       </section>
     </div>
   )

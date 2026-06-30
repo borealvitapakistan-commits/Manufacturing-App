@@ -34,11 +34,13 @@ import {
   deleteLabelInventory
 } from '@/lib/supabase/data'
 import { formatDate } from '@/lib/utils'
-import type { Brand, Product, LabelInventory } from '@/types'
+import type { Brand, Product, LabelDosageType, LabelInventory, LabelInventoryType } from '@/types'
 
 interface FormState {
   brandId: string
   productId: string
+  type: LabelInventoryType
+  dosageType: LabelDosageType
   labelName: string
   quantity: string
   reorderLevel: string
@@ -49,11 +51,28 @@ interface FormState {
 const defaultForm: FormState = {
   brandId: '',
   productId: '',
+  type: 'capsule',
+  dosageType: '60',
   labelName: 'Standard Label',
   quantity: '',
   reorderLevel: '0',
   notes: '',
   isActive: true
+}
+
+const LABEL_TYPE_OPTIONS: Array<{ value: LabelInventoryType; label: string }> = [
+  { value: 'capsule', label: 'Capsule' },
+  { value: 'tablets', label: 'Tablets' },
+  { value: 'softgel', label: 'Softgel' },
+  { value: 'liquid', label: 'Liquid' },
+  { value: 'lozengers', label: 'Lozengers' },
+  { value: 'powder', label: 'Powder' }
+]
+
+const DOSAGE_TYPE_OPTIONS: LabelDosageType[] = ['60', '90', '120', '180', '240']
+
+function formatLabelType(value: string | null | undefined): string {
+  return LABEL_TYPE_OPTIONS.find(option => option.value === value)?.label || '-'
 }
 
 export default function LabelsPage() {
@@ -95,7 +114,7 @@ export default function LabelsPage() {
       } catch (labelError) {
         console.error('Label inventory schema not available:', labelError)
         setLabels([])
-        setError('Label inventory table is missing. Run supabase/schemas/14_label_inventory.sql and 20_rls_policies.sql in Supabase SQL Editor.')
+        setError('Label inventory table is missing or outdated. Run the Supabase migrations through 018_product_label_types_and_raw_material_categories.sql.')
       }
     } catch (err) {
       console.error('Failed to load labels:', err)
@@ -108,6 +127,8 @@ export default function LabelsPage() {
   function validateForm(): string | null {
     if (!form.brandId) return 'Brand is required.'
     if (!form.productId) return 'Product is required.'
+    if (!form.type) return 'Type is required.'
+    if (!form.dosageType) return 'Dosage type is required.'
     if (!form.labelName.trim()) return 'Label name is required.'
 
     const quantity = Number(form.quantity)
@@ -147,6 +168,8 @@ export default function LabelsPage() {
         brandName: brand.name,
         productId: form.productId,
         productName: product.name,
+        type: form.type,
+        dosageType: form.dosageType,
         labelName: form.labelName.trim(),
         quantity: Number(form.quantity) || 0,
         reorderLevel: Number(form.reorderLevel) || 0,
@@ -191,6 +214,8 @@ export default function LabelsPage() {
     setForm({
       brandId: item.brandId,
       productId: item.productId,
+      type: item.type || 'capsule',
+      dosageType: item.dosageType || '60',
       labelName: item.labelName || 'Standard Label',
       quantity: String(item.quantity ?? 0),
       reorderLevel: String(item.reorderLevel ?? 0),
@@ -308,6 +333,32 @@ export default function LabelsPage() {
             />
           </div>
           <div>
+            <Label>Type *</Label>
+            <Select
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value as LabelInventoryType })}
+            >
+              {LABEL_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>Dosage Type *</Label>
+            <Select
+              value={form.dosageType}
+              onChange={(e) => setForm({ ...form, dosageType: e.target.value as LabelDosageType })}
+            >
+              {DOSAGE_TYPE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
             <Label>Quantity *</Label>
             <NumberInput
               min="0"
@@ -353,6 +404,8 @@ export default function LabelsPage() {
             <TableRow>
               <TableHead>Brand</TableHead>
               <TableHead>Product</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Dosage</TableHead>
               <TableHead>Label</TableHead>
               <TableHead>Quantity</TableHead>
               <TableHead>Reorder Level</TableHead>
@@ -363,9 +416,9 @@ export default function LabelsPage() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoading colSpan={8} />
+              <TableLoading colSpan={10} />
             ) : labels.length === 0 ? (
-              <TableEmpty colSpan={8} message="No label inventory found. Add your first entry." />
+              <TableEmpty colSpan={10} message="No label inventory found. Add your first entry." />
             ) : (
               labels.map((item) => {
                 const quantity = Number(item.quantity || 0)
@@ -376,6 +429,8 @@ export default function LabelsPage() {
                   <TableRow key={item.id}>
                     <TableCell>{item.brandName}</TableCell>
                     <TableCell>{item.productName}</TableCell>
+                    <TableCell>{formatLabelType(item.type)}</TableCell>
+                    <TableCell>{item.dosageType || '-'}</TableCell>
                     <TableCell className="font-medium">{item.labelName}</TableCell>
                     <TableCell>{quantity}</TableCell>
                     <TableCell>{reorderLevel}</TableCell>

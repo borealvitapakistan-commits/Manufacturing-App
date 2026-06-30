@@ -81,6 +81,30 @@ export async function fetchRawMaterials<T = unknown>(): Promise<T[]> {
   return unwrap(await api.get<Data<T[]>>('/raw-materials?limit=500'))
 }
 
+export async function fetchRawMaterialsByCategory<T = unknown>(categoryId: string): Promise<T[]> {
+  return unwrap(await api.get<Data<T[]>>(`/raw-materials${query({ category_id: categoryId, limit: 500 })}`))
+}
+
+export async function fetchRawMaterialCategories<T = unknown>(options?: { activeOnly?: boolean }): Promise<T[]> {
+  return unwrap(await api.get<Data<T[]>>(`/raw-material-categories${query({ activeOnly: options?.activeOnly, limit: 500 })}`))
+}
+
+export async function fetchRawMaterialCategory(id: string) {
+  return unwrap(await api.get<Data<AnyRecord>>(`/raw-material-categories/${id}`))
+}
+
+export async function saveRawMaterialCategory(category: AnyRecord) {
+  const { id, createdAt, updatedAt, ...payload } = category
+  const result = id
+    ? unwrap(await api.put<Data<AnyRecord>>(`/raw-material-categories/${id}`, payload))
+    : unwrap(await api.post<Data<AnyRecord>>('/raw-material-categories', payload))
+  return result.id as string
+}
+
+export async function deleteRawMaterialCategory(id: string) {
+  await api.delete(`/raw-material-categories/${id}`)
+}
+
 export async function fetchRawMaterial(id: string) {
   return unwrap(await api.get<Data<AnyRecord>>(`/raw-materials/${id}`))
 }
@@ -241,6 +265,16 @@ export async function completeBatchStage(
 ) {
   return unwrap(
     await api.post<Data<AnyRecord>>(`/batches/${batchId}/stages/${stage}/end`, input)
+  )
+}
+
+export async function updateBatchStageLifecycle(
+  batchId: string,
+  stage: ManufacturingStage,
+  input: StageLifecycleInput = {}
+) {
+  return unwrap(
+    await api.put<Data<AnyRecord>>(`/batches/${batchId}/stages/${stage}/lifecycle`, input)
   )
 }
 

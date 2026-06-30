@@ -29,7 +29,14 @@ import {
   generateBatchCode
 } from '@/lib/supabase/data'
 import { isUnitBasedForm, calculateTotalUnits, parseLabelClaimToMg, mgToKg } from '@/lib/utils'
-import type { Batch, Brand, Product, RawMaterial, LabelInventory, DosageForm } from '@/types'
+import type {
+  Batch,
+  Brand,
+  Product,
+  RawMaterial,
+  LabelInventory,
+  DosageForm
+} from '@/types'
 
 const DOSAGE_FORMS: DosageForm[] = ['capsule', 'tablet', 'softgel', 'lozenge', 'oil', 'liquid', 'other']
 const RM_NOT_ENOUGH_MESSAGE = 'RM is not enough to make this batch of products.'
@@ -41,7 +48,21 @@ function todayInput(): string {
 
 function toDateInput(value: unknown): string {
   if (!value) return ''
-  const date = typeof value === 'number' ? new Date(value) : value instanceof Date ? value : null
+  let date: Date | null = null
+  if (typeof value === 'number') {
+    date = new Date(value)
+  } else if (value instanceof Date) {
+    date = value
+  } else if (typeof value === 'string') {
+    date = /^\d+$/.test(value) ? new Date(Number(value)) : new Date(value)
+  } else if (
+    typeof value === 'object' &&
+    value !== null &&
+    'seconds' in value &&
+    typeof (value as { seconds: number }).seconds === 'number'
+  ) {
+    date = new Date((value as { seconds: number }).seconds * 1000)
+  }
   if (!date || Number.isNaN(date.getTime())) return ''
   return date.toISOString().slice(0, 10)
 }
@@ -83,6 +104,7 @@ interface FormState {
   unitsPerContainer: string
   containerCount: string
   batchStartDate: string
+  batchEndDate: string
   startTime: string
   endTime: string
   notes: string
@@ -98,6 +120,7 @@ const defaultForm: FormState = {
   unitsPerContainer: '',
   containerCount: '',
   batchStartDate: todayInput(),
+  batchEndDate: '',
   startTime: '',
   endTime: '',
   notes: '',
@@ -208,6 +231,7 @@ function AddBatchContent() {
           unitsPerContainer: batch.unitsPerContainer?.toString() || '',
           containerCount: batch.containerCount?.toString() || '',
           batchStartDate: toDateInput(batch.batchStartDate || batch.createdAt) || todayInput(),
+          batchEndDate: toDateInput(batch.batchEndDate),
           startTime: batch.startTime || '',
           endTime: batch.endTime || '',
           notes: batch.notes || '',
@@ -228,7 +252,7 @@ function AddBatchContent() {
     if (!form.dosageForm) return 'Select a dosage form.'
     const containers = Number(form.containerCount)
     if (!Number.isFinite(containers) || containers <= 0) return 'Enter number of containers.'
-    if (isUnitBased) {
+    if (!editId && isUnitBased) {
       const upc = Number(form.unitsPerContainer)
       if (!Number.isFinite(upc) || upc <= 0) return 'Enter units per container.'
       if (!totalUnits || totalUnits <= 0) return 'Total units cannot be zero.'
@@ -359,6 +383,7 @@ function AddBatchContent() {
   async function persistBatch(brand: Brand, product: Product, stockPlanNotes?: string) {
     try {
       setSaving(true)
+      const isEditing = Boolean(editId)
 
       // Generate batch code if needed
       let batchCode = form.currentBatchCode
@@ -384,24 +409,25 @@ function AddBatchContent() {
         totalUnits: isUnitBased ? totalUnits : null,
         startTime: form.startTime || null,
         endTime: form.endTime || null,
-        batchStatus: 'Batch Created',
-        currentStage: 'batch',
         batchStartDate: dateInputToMs(form.batchStartDate),
+        batchEndDate: dateInputToMs(form.batchEndDate),
         batchStartTime: form.startTime || null,
         batchEndTime: form.endTime || null,
+        batchStatus: isEditing ? undefined : 'Batch Created',
+        currentStage: isEditing ? undefined : 'batch',
         batchRemarks: mergeNotes(form.notes || '', stockPlanNotes) || null,
         notes: mergeNotes(form.notes || '', stockPlanNotes),
-        status: 'mixingPending',
-        hasMixing: false,
-        hasNJP: false,
-        hasAssembly: false,
-        inventoryDeducted: false
+        status: isEditing ? undefined : 'mixingPending',
+        hasMixing: isEditing ? undefined : false,
+        hasNJP: isEditing ? undefined : false,
+        hasAssembly: isEditing ? undefined : false,
+        inventoryDeducted: isEditing ? undefined : false
       }
 
       await saveBatch(payload)
 
       showToast({
-        message: editId ? 'Batch updated and RM inventory updated' : 'Batch created and RM inventory updated',
+        message: editId ? 'Batch updated' : 'Batch created and RM inventory updated',
         type: 'success'
       })
 
@@ -416,9 +442,14 @@ function AddBatchContent() {
   }
 
   function resetForm() {
-    setForm(defaultForm)
+    setForm({ ...defaultForm, batchStartDate: todayInput(), batchEndDate: '' })
     setError('')
     setStockPlan(null)
+  }
+
+  function getAssemblyHref(): string {
+    if (!editId || !form.brandId) return '#'
+    return `/batches/assembly?batchId=${editId}&brandId=${form.brandId}`
   }
 
   if (loading) {
@@ -434,39 +465,27 @@ function AddBatchContent() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">{editId ? 'Edit Batch' : 'Create Batch'}</h1>
-          <p className="text-zinc-600">Create a new production batch</p>
+          <p className="text-zinc-600">
+            {editId ? `Batch ${form.currentBatchCode || ''}` : 'Create a new production batch'}
+          </p>
         </div>
         <Link href="/batches">
           <Button variant="ghost">Back to Batches</Button>
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Link href="/batches/mixing">
-          <Card className="hover:border-[#1D838D] transition cursor-pointer">
-            <div className="text-center py-3 min-h-20 flex flex-col items-center justify-center">
-              <div className="text-2xl mb-1">🧪</div>
-              <div className="font-medium text-sm sm:text-base leading-snug">Mixing</div>
-            </div>
-          </Card>
-        </Link>
-        <Link href="/batches/njp">
-          <Card className="hover:border-[#1D838D] transition cursor-pointer">
-            <div className="text-center py-3 min-h-20 flex flex-col items-center justify-center">
-              <div className="text-2xl mb-1">💊</div>
-              <div className="font-medium text-sm sm:text-base leading-snug">NJP</div>
-            </div>
-          </Card>
-        </Link>
-        <Link href="/batches/assembly">
+      {editId && (
+        <div className="grid grid-cols-1 gap-4 sm:max-w-sm">
+          <Link href={getAssemblyHref()}>
           <Card className="hover:border-[#1D838D] transition cursor-pointer">
             <div className="text-center py-3 min-h-20 flex flex-col items-center justify-center">
               <div className="text-2xl mb-1">📋</div>
               <div className="font-medium text-sm sm:text-base leading-snug">Assembly</div>
             </div>
           </Card>
-        </Link>
-      </div>
+          </Link>
+        </div>
+      )}
 
       {error && (
         <div className="p-3 rounded-lg bg-rose-100 text-rose-800 border border-rose-200">
@@ -559,7 +578,7 @@ function AddBatchContent() {
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <Label>Batch Start Date</Label>
               <Input
@@ -569,7 +588,7 @@ function AddBatchContent() {
               />
             </div>
             <div>
-              <Label>Time Start</Label>
+              <Label>Batch Start Time</Label>
               <Input
                 type="time"
                 value={form.startTime}
@@ -577,7 +596,15 @@ function AddBatchContent() {
               />
             </div>
             <div>
-              <Label>Time End</Label>
+              <Label>Batch End Date</Label>
+              <Input
+                type="date"
+                value={form.batchEndDate}
+                onChange={e => setForm({ ...form, batchEndDate: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Batch End Time</Label>
               <Input
                 type="time"
                 value={form.endTime}

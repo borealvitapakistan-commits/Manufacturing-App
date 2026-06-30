@@ -82,7 +82,8 @@ function stageComplete(row: WorkflowRow, stage: ManufacturingStage): boolean {
 }
 
 function stageRoute(row: WorkflowRow, stage: ManufacturingStage): string {
-  return `/batches/${stage}?batchId=${row.batch.id}&brandId=${row.batch.brandId}`
+  const basePath = stage === 'assembly' ? '/batches/assembly' : `/${stage}`
+  return `${basePath}?batchId=${row.batch.id}&brandId=${row.batch.brandId}`
 }
 
 function formatStageName(value: string | null | undefined): string {

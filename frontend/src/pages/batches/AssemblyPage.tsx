@@ -311,6 +311,8 @@ function AssemblyFormModal({
     expiryDate: toDateInput(report?.expiryDate) || '',
     startDate: toDateInput(report?.startDate ?? report?.qualityControlDate ?? report?.productionDate ?? batch?.createdAt) || '',
     endDate: toDateInput(report?.endDate ?? report?.packagingDate ?? report?.productionDate ?? batch?.createdAt) || '',
+    startTime: report?.startTime ?? report?.qualityControlStartTime ?? '',
+    endTime: report?.endTime ?? report?.packagingEndTime ?? '',
     qualityControlDate: toDateInput(report?.qualityControlDate ?? report?.productionDate ?? batch?.createdAt) || '',
     qualityControlStartTime: report?.qualityControlStartTime ?? '',
     qualityControlEndTime: report?.qualityControlEndTime ?? '',
@@ -352,9 +354,9 @@ function AssemblyFormModal({
         productionDate: form.productionDate ? new Date(form.productionDate).getTime() : null,
         expiryDate: form.expiryDate ? new Date(form.expiryDate).getTime() : null,
         startDate: form.startDate ? new Date(form.startDate).getTime() : null,
-        startTime: form.qualityControlStartTime || null,
+        startTime: form.startTime || null,
         endDate: form.endDate ? new Date(form.endDate).getTime() : null,
-        endTime: form.packagingEndTime || null,
+        endTime: form.endTime || null,
         qualityControlDate: form.qualityControlDate ? new Date(form.qualityControlDate).getTime() : null,
         qualityControlStartTime: form.qualityControlStartTime || null,
         qualityControlEndTime: form.qualityControlEndTime || null,
@@ -426,7 +428,7 @@ function AssemblyFormModal({
             />
           </div>
           <div>
-            <Label>Stage Start Date</Label>
+            <Label>Assembly Start Date</Label>
             <Input
               type="date"
               value={form.startDate}
@@ -434,11 +436,27 @@ function AssemblyFormModal({
             />
           </div>
           <div>
-            <Label>Stage End Date</Label>
+            <Label>Assembly End Date</Label>
             <Input
               type="date"
               value={form.endDate}
               onChange={e => setForm({ ...form, endDate: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>Assembly Start Time</Label>
+            <Input
+              type="time"
+              value={form.startTime}
+              onChange={e => setForm({ ...form, startTime: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>Assembly End Time</Label>
+            <Input
+              type="time"
+              value={form.endTime}
+              onChange={e => setForm({ ...form, endTime: e.target.value })}
             />
           </div>
           <div>

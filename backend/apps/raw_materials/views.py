@@ -3,15 +3,19 @@ from rest_framework.views import APIView
 
 from apps.common.api import TableDetailView, TableListCreateView
 from apps.common.serializers import StockAdjustmentSerializer, StockLevelSerializer
-from services.catalog_service import RawMaterialService
+from services.catalog_service import RawMaterialCategoryService, RawMaterialService
 
-from .serializers import RawMaterialSerializer
+from .serializers import RawMaterialCategorySerializer, RawMaterialSerializer
 
 
 class RawMaterialListCreateView(TableListCreateView):
     service_class = RawMaterialService
     serializer_class = RawMaterialSerializer
     search_column = "name"
+    filter_map = {
+        "categoryId": "category_id",
+        "category_id": "category_id",
+    }
 
     def get(self, request):
         if request.query_params.get("lowStock") is not None:
@@ -32,6 +36,27 @@ class RawMaterialListCreateView(TableListCreateView):
 class RawMaterialDetailView(TableDetailView):
     service_class = RawMaterialService
     serializer_class = RawMaterialSerializer
+
+
+class RawMaterialCategoryListCreateView(TableListCreateView):
+    service_class = RawMaterialCategoryService
+    serializer_class = RawMaterialCategorySerializer
+    search_column = "name"
+    filter_map = {
+        "active": "is_active",
+        "activeOnly": "is_active",
+    }
+
+    def get_filters(self, request):
+        filters = super().get_filters(request)
+        if request.query_params.get("activeOnly", "").lower() == "true":
+            filters["is_active"] = True
+        return filters
+
+
+class RawMaterialCategoryDetailView(TableDetailView):
+    service_class = RawMaterialCategoryService
+    serializer_class = RawMaterialCategorySerializer
 
 
 class LowStockView(APIView):

@@ -159,6 +159,106 @@ class BatchServiceUnitTests(SimpleTestCase):
         self.assertEqual(update_payload["currentStage"], "mixing")
         self.assertEqual(result["report"]["status"], "In Mixing")
 
+    @patch("services.batch_service.BatchService.get")
+    @patch("services.batch_service.BatchService.update")
+    def test_stage_lifecycle_update_saves_completed_metadata_without_completion_flow(
+        self,
+        mocked_update,
+        mocked_get,
+    ):
+        def fake_create(service_class, payload):
+            return {"id": "report-id", **payload}
+
+        mocked_get.side_effect = [
+            {
+                "id": "batch-id",
+                "hasMixing": False,
+                "status": "mixingPending",
+                "brandId": "brand-id",
+                "productId": "product-id",
+                "batchCode": "BV001",
+                "brandName": "Boriel Vita",
+                "productName": "Product",
+            },
+            {"id": "batch-id", "batchStatus": "Mixing Completed"},
+        ]
+
+        with patch("services.batch_service.TableService.create", new=classmethod(fake_create)), patch(
+            "services.batch_service.MixingService.get_by_batch",
+            side_effect=ServiceError("Mixing report not found", 404),
+        ):
+            result = StageLifecycleService.update_stage(
+                "batch-id",
+                "mixing",
+                {
+                    "startDate": 1782518400000,
+                    "startTime": "09:15",
+                    "endDate": 1782604800000,
+                    "endTime": "18:10",
+                    "remarks": "Finished",
+                },
+            )
+
+        self.assertEqual(result["report"]["status"], "Mixing Completed")
+        update_payload = mocked_update.call_args_list[0].args[1]
+        self.assertTrue(update_payload["hasMixing"])
+        self.assertEqual(update_payload["status"], "ngpPending")
+        self.assertEqual(update_payload["currentStage"], "njp")
+
+    @patch("services.batch_service.BatchService.get")
+    @patch("services.batch_service.BatchService.update")
+    def test_stage_lifecycle_update_preserves_later_stage_progress(
+        self,
+        mocked_update,
+        mocked_get,
+    ):
+        def fake_update(service_class, item_id, payload):
+            return {"id": item_id, **payload}
+
+        mocked_get.side_effect = [
+            {
+                "id": "batch-id",
+                "hasMixing": True,
+                "hasNJP": True,
+                "hasAssembly": False,
+                "status": "assemblyPending",
+                "batchStatus": "NJP Completed",
+                "currentStage": "assembly",
+                "brandId": "brand-id",
+                "productId": "product-id",
+                "batchCode": "BV001",
+                "brandName": "Boriel Vita",
+                "productName": "Product",
+            },
+            {"id": "batch-id", "batchStatus": "NJP Completed"},
+        ]
+
+        with patch("services.batch_service.TableService.update", new=classmethod(fake_update)), patch(
+            "services.batch_service.MixingService.get_by_batch",
+            return_value={
+                "id": "mixing-report-id",
+                "batchId": "batch-id",
+                "status": "Mixing Completed",
+            },
+        ):
+            StageLifecycleService.update_stage(
+                "batch-id",
+                "mixing",
+                {
+                    "startDate": 1782518400000,
+                    "startTime": "09:15",
+                    "endDate": 1782604800000,
+                    "endTime": "18:10",
+                },
+            )
+
+        update_payload = mocked_update.call_args_list[0].args[1]
+        self.assertTrue(update_payload["hasMixing"])
+        self.assertTrue(update_payload["hasNJP"])
+        self.assertEqual(update_payload["batchStatus"], "NJP Completed")
+        self.assertEqual(update_payload["status"], "assemblyPending")
+        self.assertEqual(update_payload["currentStage"], "assembly")
+
 
 class BatchAPITests(SimpleTestCase):
     batch_id = "11111111-1111-1111-1111-111111111111"
@@ -289,6 +389,31 @@ class BatchAPITests(SimpleTestCase):
             self.batch_id,
             "mixing",
             {"startDate": 1782518400000, "startTime": "09:15", "remarks": "Started"},
+        )
+
+    @patch("apps.batches.views.StageLifecycleService.update_stage")
+    def test_stage_lifecycle_endpoint_updates_stage_timing(self, mocked_update):
+        mocked_update.return_value = {"stage": "mixing", "report": {"id": self.batch_id}}
+        response = self.client.put(
+            f"/api/batches/{self.batch_id}/stages/mixing/lifecycle",
+            {
+                "startDate": 1782518400000,
+                "startTime": "09:15",
+                "endDate": 1782604800000,
+                "endTime": "18:10",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        mocked_update.assert_called_once_with(
+            self.batch_id,
+            "mixing",
+            {
+                "startDate": 1782518400000,
+                "startTime": "09:15",
+                "endDate": 1782604800000,
+                "endTime": "18:10",
+            },
         )
 
     @patch("services.batch_service.BatchService.update")

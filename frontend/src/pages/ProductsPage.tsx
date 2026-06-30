@@ -26,10 +26,11 @@ import {
   initSupabase,
   fetchProducts,
   fetchRawMaterials,
+  fetchRawMaterialCategories,
   saveProduct,
   deleteProduct
 } from '@/lib/supabase/data'
-import type { Product, ProductRawMaterial, RawMaterial } from '@/types'
+import type { Product, ProductRawMaterial, ProductType, RawMaterial, RawMaterialCategory } from '@/types'
 
 // ============================================================================
 // Types
@@ -38,6 +39,7 @@ import type { Product, ProductRawMaterial, RawMaterial } from '@/types'
 interface RMFormRow {
   id: string
   sr: number
+  categoryId: string
   rawMaterialId: string
   rawMaterialCode: string | null
   rawMaterial: string
@@ -46,6 +48,7 @@ interface RMFormRow {
 
 interface FormState {
   name: string
+  type: ProductType | ''
   npn: string
   rm: RMFormRow[]
 }
@@ -56,9 +59,19 @@ interface FormState {
 
 const uid = () => Math.random().toString(36).slice(2, 9)
 
+const PRODUCT_TYPE_OPTIONS: Array<{ value: ProductType; label: string }> = [
+  { value: 'capsule', label: 'Capsule' },
+  { value: 'tablets', label: 'Tablets' },
+  { value: 'softgel', label: 'Softgel' },
+  { value: 'liquid', label: 'Liquid' },
+  { value: 'lozengers', label: 'Lozengers' },
+  { value: 'powder', label: 'Powder' }
+]
+
 const emptyRM = (sr: number = 1): RMFormRow => ({
   id: uid(),
   sr,
+  categoryId: '',
   rawMaterialId: '',
   rawMaterialCode: null,
   rawMaterial: '',
@@ -67,6 +80,7 @@ const emptyRM = (sr: number = 1): RMFormRow => ({
 
 const createDefaultForm = (): FormState => ({
   name: '',
+  type: 'capsule',
   npn: '',
   rm: [emptyRM()]
 })
@@ -85,6 +99,10 @@ function parseLabelClaimToMg(claim: string): number {
 
 function normalizeText(value: string | null | undefined): string {
   return (value || '').trim().toLowerCase()
+}
+
+function formatProductType(value: string | null | undefined): string {
+  return PRODUCT_TYPE_OPTIONS.find(option => option.value === value)?.label || '-'
 }
 
 function findMatchingRawMaterial(
@@ -118,6 +136,7 @@ function findMatchingRawMaterial(
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([])
+  const [categories, setCategories] = useState<RawMaterialCategory[]>([])
   const [form, setForm] = useState<FormState>(createDefaultForm)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -142,6 +161,16 @@ export default function ProductsPage() {
     return new Map(rawMaterials.map(rm => [rm.id, rm]))
   }, [rawMaterials])
 
+  const activeCategories = useMemo(
+    () => categories.filter(category => category.isActive !== false),
+    [categories]
+  )
+
+  const otherCategory = useMemo(
+    () => categories.find(category => category.name.trim().toLowerCase() === 'other') || null,
+    [categories]
+  )
+
   useEffect(() => {
     loadData()
   }, [])
@@ -150,12 +179,14 @@ export default function ProductsPage() {
     try {
       setLoading(true)
       await initSupabase()
-      const [productList, materialList] = await Promise.all([
+      const [productList, materialList, categoryList] = await Promise.all([
         fetchProducts(),
-        fetchRawMaterials()
+        fetchRawMaterials(),
+        fetchRawMaterialCategories({ activeOnly: true })
       ])
       setProducts(productList as Product[])
       setRawMaterials(materialList as RawMaterial[])
+      setCategories(categoryList as RawMaterialCategory[])
     } catch (err) {
       console.error('Failed to load products:', err)
       setError('Failed to load products.')
@@ -166,8 +197,10 @@ export default function ProductsPage() {
 
   function validateForm(): string | null {
     if (!form.name.trim()) return 'Product name is required.'
+    if (!form.type) return 'Product type is required.'
     const filledRows = form.rm.filter(r => r.rawMaterialId || r.rawMaterial.trim() || r.labelClaim.trim())
     if (filledRows.length === 0) return 'Select at least one raw material.'
+    if (filledRows.some(r => !r.categoryId)) return 'Select a raw material category for every RM row.'
     if (filledRows.some(r => !r.rawMaterialId)) return 'Select a raw material from the list for every RM row.'
     if (filledRows.some(r => !r.labelClaim.trim())) return 'Enter label claim for every selected raw material.'
     return null
@@ -190,6 +223,7 @@ export default function ProductsPage() {
         .map((r, idx) => ({
           id: r.id,
           sr: idx + 1,
+          categoryId: rawMaterialById.get(r.rawMaterialId)?.categoryId || r.categoryId || null,
           rawMaterial: rawMaterialById.get(r.rawMaterialId)?.name || r.rawMaterial.trim(),
           rawMaterialCode: rawMaterialById.get(r.rawMaterialId)?.code || r.rawMaterialCode || null,
           rawMaterialId: r.rawMaterialId,
@@ -200,6 +234,7 @@ export default function ProductsPage() {
       const payload = {
         id: editingId || undefined,
         name: form.name.trim(),
+        type: form.type || 'capsule',
         npn: form.npn.trim() || null,
         rm: cleanedRM
       }
@@ -247,12 +282,14 @@ export default function ProductsPage() {
     setEditingId(product.id)
     setForm({
       name: product.name || '',
+      type: product.type || 'capsule',
       npn: product.npn || '',
       rm: (product.rm || []).map((r, idx) => {
         const matchedMaterial = findMatchingRawMaterial(r, rawMaterials)
         return {
           id: r.id || uid(),
           sr: idx + 1,
+          categoryId: matchedMaterial?.categoryId || r.categoryId || otherCategory?.id || '',
           rawMaterialId: matchedMaterial?.id || r.rawMaterialId || '',
           rawMaterialCode: matchedMaterial?.code || r.rawMaterialCode || null,
           rawMaterial: matchedMaterial?.name || r.rawMaterial || '',
@@ -295,6 +332,22 @@ export default function ProductsPage() {
     }))
   }
 
+  function updateRMCategory(id: string, categoryId: string) {
+    setForm(f => ({
+      ...f,
+      rm: f.rm.map(r => r.id === id
+        ? {
+            ...r,
+            categoryId,
+            rawMaterialId: '',
+            rawMaterialCode: null,
+            rawMaterial: ''
+          }
+        : r
+      )
+    }))
+  }
+
   function updateRMSelection(id: string, rawMaterialId: string) {
     const material = rawMaterialById.get(rawMaterialId)
     setForm(f => ({
@@ -302,6 +355,7 @@ export default function ProductsPage() {
       rm: f.rm.map(r => r.id === id
         ? {
             ...r,
+            categoryId: material?.categoryId || r.categoryId,
             rawMaterialId,
             rawMaterialCode: material?.code || null,
             rawMaterial: material?.name || ''
@@ -312,19 +366,48 @@ export default function ProductsPage() {
   }
 
   function renderRawMaterialSelect(row: RMFormRow) {
+    const filteredMaterials = row.categoryId
+      ? rawMaterials.filter(material => material.categoryId === row.categoryId)
+      : []
+
     return (
-      <div>
-        <Select
-          value={row.rawMaterialId}
-          onChange={e => updateRMSelection(row.id, e.target.value)}
-        >
-          <option value="">Select Raw Material</option>
-          {rawMaterials.map(material => (
-            <option key={material.id} value={material.id}>
-              {material.code} - {material.name} ({material.qty ?? 0} kg)
-            </option>
-          ))}
-        </Select>
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <Select
+            value={row.categoryId}
+            onChange={e => updateRMCategory(row.id, e.target.value)}
+          >
+            <option value="">Select Category</option>
+            {activeCategories.map(category => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </Select>
+          <Button
+            type="button"
+            variant="subtle"
+            size="sm"
+            disabled={!otherCategory}
+            onClick={() => otherCategory && updateRMCategory(row.id, otherCategory.id)}
+          >
+            Other
+          </Button>
+        </div>
+        <div>
+          <Select
+            value={row.rawMaterialId}
+            onChange={e => updateRMSelection(row.id, e.target.value)}
+            disabled={!row.categoryId}
+          >
+            <option value="">Select Raw Material</option>
+            {filteredMaterials.map(material => (
+              <option key={material.id} value={material.id}>
+                {material.code} - {material.name} ({material.qty ?? 0} kg)
+              </option>
+            ))}
+          </Select>
+        </div>
         {!row.rawMaterialId && row.rawMaterial && (
           <p className="mt-1 text-xs text-amber-700">
             Previous typed value: {row.rawMaterial}. Select the matching raw material before saving.
@@ -362,7 +445,7 @@ export default function ProductsPage() {
         >
           <div className="space-y-4">
             {/* Product Details */}
-            <div className="grid items-end gap-3 md:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_auto]">
+            <div className="grid items-end gap-3 md:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_minmax(12rem,1fr)_auto]">
               <div>
                 <Label>Product Name *</Label>
                 <Input
@@ -370,6 +453,19 @@ export default function ProductsPage() {
                   onChange={e => setForm({ ...form, name: e.target.value })}
                   placeholder="e.g., Multivitamin 500mg"
                 />
+              </div>
+              <div>
+                <Label>Product Type *</Label>
+                <Select
+                  value={form.type}
+                  onChange={e => setForm({ ...form, type: e.target.value as ProductType })}
+                >
+                  {PRODUCT_TYPE_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
               </div>
               <div>
                 <Label>NPN</Label>
@@ -480,6 +576,7 @@ export default function ProductsPage() {
               filteredProducts.map(p => (
                 <div key={p.id} className="rounded-xl border border-zinc-200 p-3 bg-white">
                   <div className="font-medium">{p.name}</div>
+                  <div className="text-xs text-zinc-500">Type: {formatProductType(p.type)}</div>
                   <div className="text-xs text-zinc-500">NPN: {p.npn || '-'}</div>
                   <div className="text-xs text-zinc-500 mb-2">RM count: {p.rm?.length || 0}</div>
                   <div className="flex gap-2">
@@ -497,6 +594,7 @@ export default function ProductsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Product</TableHead>
+                  <TableHead className="w-32">Type</TableHead>
                   <TableHead className="w-32">NPN</TableHead>
                   <TableHead className="w-24">RM count</TableHead>
                   <TableHead className="w-40">Actions</TableHead>
@@ -504,13 +602,14 @@ export default function ProductsPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableLoading colSpan={4} />
+                  <TableLoading colSpan={5} />
                 ) : filteredProducts.length === 0 ? (
-                  <TableEmpty colSpan={4} message="No products found." />
+                  <TableEmpty colSpan={5} message="No products found." />
                 ) : (
                   filteredProducts.map(p => (
                     <TableRow key={p.id}>
                       <TableCell className="font-medium">{p.name}</TableCell>
+                      <TableCell>{formatProductType(p.type)}</TableCell>
                       <TableCell>{p.npn || '-'}</TableCell>
                       <TableCell>{p.rm?.length || 0}</TableCell>
                       <TableCell>

@@ -1079,6 +1079,118 @@ class StageLifecycleService:
         )
 
     @classmethod
+    def _status_from_lifecycle(
+        cls,
+        stage: str,
+        payload: dict[str, Any],
+        existing: dict[str, Any] | None,
+    ) -> str:
+        if payload.get("status"):
+            return str(payload["status"])
+        if existing and existing.get("status"):
+            return str(existing["status"])
+        if payload.get("endDate") or payload.get("endTime"):
+            return cls.COMPLETED_STATUS[stage]
+        return cls.START_STATUS[stage]
+
+    @classmethod
+    def update_stage(
+        cls,
+        batch_id: str,
+        stage: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        service = cls._service(stage)
+        batch = BatchService.get(batch_id)
+        existing = cls._get_existing(service, batch_id)
+        status = cls._status_from_lifecycle(stage, payload, existing)
+        payload_with_status = {**payload, "status": status}
+
+        if existing:
+            update_payload = {
+                key: payload_with_status[key]
+                for key in STAGE_LIFECYCLE_KEYS
+                if key in payload_with_status
+            }
+            report = TableService.update.__func__(
+                service,
+                str(existing["id"]),
+                update_payload,
+            )
+        else:
+            stage_payload = cls._start_payload(
+                stage,
+                batch,
+                batch_id,
+                payload_with_status,
+            )
+            stage_payload["status"] = status
+            report = TableService.create.__func__(service, stage_payload)
+
+        completed = status == cls.COMPLETED_STATUS[stage]
+        batch_update = {
+            "batchStatus": "Completed" if stage == "assembly" and completed else status,
+            "currentStage": (
+                cls.CURRENT_STAGE_AFTER_COMPLETE[stage]
+                if completed
+                else stage
+            ),
+        }
+        if "remarks" in payload:
+            batch_update["batchRemarks"] = payload.get("remarks")
+        if "reason" in payload:
+            batch_update["reason"] = payload.get("reason")
+        if not batch.get("batchStartDate") and payload.get("startDate"):
+            batch_update["batchStartDate"] = payload.get("startDate")
+        if not batch.get("batchStartTime") and payload.get("startTime"):
+            batch_update["batchStartTime"] = payload.get("startTime")
+
+        if completed:
+            has_mixing = bool(batch.get("hasMixing")) or stage == "mixing"
+            has_njp = bool(batch.get("hasNJP")) or stage == "njp"
+            has_assembly = bool(batch.get("hasAssembly")) or stage == "assembly"
+
+            if has_assembly:
+                batch_update.update(
+                    {
+                        "hasMixing": True,
+                        "hasNJP": True,
+                        "hasAssembly": True,
+                        "batchStatus": "Completed",
+                        "currentStage": "finished_goods",
+                        "status": "finalized",
+                    }
+                )
+                if stage == "assembly":
+                    batch_update["batchEndDate"] = payload.get("endDate")
+                    batch_update["batchEndTime"] = payload.get("endTime")
+            elif has_njp:
+                batch_update.update(
+                    {
+                        "hasMixing": True,
+                        "hasNJP": True,
+                        "batchStatus": "NJP Completed",
+                        "currentStage": "assembly",
+                        "status": "assemblyPending",
+                    }
+                )
+            elif has_mixing:
+                batch_update.update(
+                    {
+                        "hasMixing": True,
+                        "batchStatus": "Mixing Completed",
+                        "currentStage": "njp",
+                        "status": "ngpPending",
+                    }
+                )
+
+        BatchService.update(
+            batch_id,
+            {key: value for key, value in batch_update.items() if value is not None},
+        )
+        return {"stage": stage, "batch": BatchService.get(batch_id), "report": report}
+
+    @classmethod
     def start_stage(cls, batch_id: str, stage: str, payload: dict[str, Any]) -> dict[str, Any]:
         service = cls._service(stage)
         batch = BatchService.get(batch_id)

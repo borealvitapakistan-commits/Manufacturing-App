@@ -6,6 +6,9 @@ from typing import Any
 from .base_service import ServiceError, TableService, translate_error
 from .converters import row_to_app, rows_to_app
 
+CATALOG_TYPES = {"capsule", "tablets", "softgel", "liquid", "lozengers", "powder"}
+LABEL_DOSAGE_TYPES = {"60", "90", "120", "180", "240"}
+
 
 class BrandService(TableService):
     table_name = "brands"
@@ -125,7 +128,7 @@ class ProductService(TableService):
                     response = (
                         cls.client()
                         .table("raw_materials")
-                        .select("id, code, name")
+                        .select("id, code, name, category_id")
                         .eq("id", str(raw_material_id))
                         .limit(1)
                         .execute()
@@ -138,12 +141,13 @@ class ProductService(TableService):
                 raw_material_id = material.get("id")
                 raw_material_code = material.get("code")
                 row["rawMaterial"] = material.get("name")
+                row["categoryId"] = material.get("category_id") or row.get("categoryId")
             elif row.get("rawMaterial"):
                 try:
                     response = (
                         cls.client()
                         .table("raw_materials")
-                        .select("id, code, name")
+                        .select("id, code, name, category_id")
                         .eq("name", row["rawMaterial"])
                         .limit(1)
                         .execute()
@@ -155,6 +159,7 @@ class ProductService(TableService):
                     raw_material_id = response.data[0].get("id")
                     raw_material_code = response.data[0].get("code")
                     row["rawMaterial"] = response.data[0].get("name")
+                    row["categoryId"] = response.data[0].get("category_id") or row.get("categoryId")
 
             if not raw_material_id:
                 raise ServiceError("Select a valid raw material for every formula row", 400)
@@ -172,8 +177,14 @@ class ProductService(TableService):
         return processed
 
     @classmethod
-    def normalize_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
+    def normalize_payload(cls, payload: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
         normalized = dict(payload)
+        if "type" in normalized:
+            normalized["type"] = str(normalized["type"] or "").strip() or "capsule"
+            if normalized["type"] not in CATALOG_TYPES:
+                raise ServiceError("Invalid product type", 400)
+        elif not partial:
+            normalized["type"] = "capsule"
         if "npn" in normalized:
             normalized["npn"] = str(normalized["npn"] or "").strip() or None
         if "rm" in normalized:
@@ -186,7 +197,7 @@ class ProductService(TableService):
 
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return super().update(item_id, cls.normalize_payload(payload))
+        return super().update(item_id, cls.normalize_payload(payload, partial=True))
 
     @classmethod
     def delete(cls, item_id: str) -> None:
@@ -267,11 +278,28 @@ class RawMaterialService(TableService):
         for key in ("code", "category", "location", "coaLink", "comments"):
             if key in normalized:
                 normalized[key] = str(normalized[key] or "").strip() or None
+        if "categoryId" in normalized:
+            normalized["categoryId"] = str(normalized["categoryId"] or "").strip() or None
+        elif "category_id" in normalized:
+            normalized["category_id"] = str(normalized["category_id"] or "").strip() or None
+        return normalized
+
+    @classmethod
+    def apply_category(cls, normalized: dict[str, Any], *, default_other: bool = False) -> dict[str, Any]:
+        category_id = normalized.get("categoryId") or normalized.get("category_id")
+        if not category_id and default_other:
+            category_id = RawMaterialCategoryService.get_other_category_id()
+            normalized["categoryId"] = category_id
+
+        if category_id:
+            category = RawMaterialCategoryService.get(str(category_id))
+            normalized["categoryId"] = category["id"]
+            normalized["category"] = category["name"]
         return normalized
 
     @classmethod
     def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        normalized = cls.normalize_payload(payload)
+        normalized = cls.apply_category(cls.normalize_payload(payload), default_other=True)
         normalized["code"] = normalized.get("code") or cls.code_from_name(
             str(normalized.get("name", ""))
         )
@@ -281,7 +309,8 @@ class RawMaterialService(TableService):
 
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return cls.with_qty_alias(super().update(item_id, cls.normalize_payload(payload)))
+        normalized = cls.apply_category(cls.normalize_payload(payload))
+        return cls.with_qty_alias(super().update(item_id, normalized))
 
     @classmethod
     def search(cls, query_text: str, limit: int = 100) -> list[dict[str, Any]]:
@@ -389,8 +418,20 @@ class LabelService(TableService):
             raise translate_error(error) from error
 
     @staticmethod
-    def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    def normalize_payload(payload: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
         normalized = dict(payload)
+        if "type" in normalized:
+            normalized["type"] = str(normalized["type"] or "").strip() or "capsule"
+            if normalized["type"] not in CATALOG_TYPES:
+                raise ServiceError("Invalid label type", 400)
+        elif not partial:
+            normalized["type"] = "capsule"
+        if "dosageType" in normalized:
+            normalized["dosageType"] = str(normalized["dosageType"] or "").strip() or "60"
+            if normalized["dosageType"] not in LABEL_DOSAGE_TYPES:
+                raise ServiceError("Invalid label dosage type", 400)
+        elif not partial:
+            normalized["dosageType"] = "60"
         if "labelName" in normalized:
             normalized["labelName"] = (
                 str(normalized["labelName"] or "").strip() or "Standard Label"
@@ -412,7 +453,7 @@ class LabelService(TableService):
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         cls.get(item_id)
-        normalized = cls.normalize_payload(payload)
+        normalized = cls.normalize_payload(payload, partial=True)
         if "brandId" in normalized:
             normalized["brandName"] = BrandService.get(str(normalized["brandId"]))["name"]
         if "productId" in normalized:
@@ -441,3 +482,78 @@ class LabelService(TableService):
             }
         except Exception as error:
             raise translate_error(error) from error
+
+
+class RawMaterialCategoryService(TableService):
+    table_name = "raw_material_categories"
+
+    @classmethod
+    def list(cls, **kwargs):
+        kwargs.setdefault("order_by", "name")
+        kwargs.setdefault("descending", False)
+        return super().list(**kwargs)
+
+    @staticmethod
+    def normalize_payload(payload: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
+        normalized = dict(payload)
+        if "name" in normalized:
+            normalized["name"] = str(normalized["name"] or "").strip()
+            if not normalized["name"]:
+                raise ServiceError("Category name is required", 400)
+        elif not partial:
+            raise ServiceError("Category name is required", 400)
+        if "description" in normalized:
+            normalized["description"] = str(normalized["description"] or "").strip() or None
+        if not partial:
+            normalized.setdefault("isActive", True)
+        return normalized
+
+    @classmethod
+    def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        return super().create(cls.normalize_payload(payload))
+
+    @classmethod
+    def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        cls.get(item_id)
+        return super().update(item_id, cls.normalize_payload(payload, partial=True))
+
+    @classmethod
+    def delete(cls, item_id: str) -> None:
+        try:
+            response = (
+                cls.client()
+                .table("raw_materials")
+                .select("id")
+                .eq("category_id", item_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as error:
+            raise translate_error(error) from error
+        if response.data:
+            raise ServiceError("Cannot delete category used by raw materials", 409)
+        super().delete(item_id)
+
+    @classmethod
+    def get_other_category_id(cls) -> str:
+        try:
+            response = (
+                cls.client()
+                .table(cls.table_name)
+                .select("id")
+                .ilike("name", "Other")
+                .limit(1)
+                .execute()
+            )
+        except Exception as error:
+            raise translate_error(error) from error
+        if not response.data:
+            created = cls.create(
+                {
+                    "name": "Other",
+                    "description": "Default category for existing and uncategorized raw materials.",
+                    "isActive": True,
+                }
+            )
+            return str(created["id"])
+        return str(response.data[0]["id"])

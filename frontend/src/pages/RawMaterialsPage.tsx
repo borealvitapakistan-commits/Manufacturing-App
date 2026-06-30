@@ -10,6 +10,8 @@ import {
   Button,
   Input,
   NumberInput,
+  Select,
+  TextArea,
   Label,
   Table,
   TableHeader,
@@ -24,15 +26,19 @@ import {
 } from '@/components/ui'
 import {
   initSupabase,
+  deleteRawMaterialCategory,
+  fetchRawMaterialCategories,
   fetchRawMaterials,
+  saveRawMaterialCategory,
   saveRawMaterial,
   deleteRawMaterial
 } from '@/lib/supabase/data'
-import type { RawMaterial } from '@/types'
+import type { RawMaterial, RawMaterialCategory } from '@/types'
 
 interface FormState {
   name: string
   qty: string
+  categoryId: string
   category: string
   location: string
   coaLink: string
@@ -43,11 +49,24 @@ interface FormState {
 const defaultForm: FormState = {
   name: '',
   qty: '',
+  categoryId: '',
   category: '',
   location: '',
   coaLink: '',
   comments: '',
   pricePerKg: ''
+}
+
+interface CategoryFormState {
+  name: string
+  description: string
+  isActive: boolean
+}
+
+const defaultCategoryForm: CategoryFormState = {
+  name: '',
+  description: '',
+  isActive: true
 }
 
 // ============================================================================
@@ -127,21 +146,34 @@ function generateRMCode(fullName: string): string {
   return final.join('-')
 }
 
+function normalizeText(value: string | null | undefined): string {
+  return (value || '').trim().toLowerCase()
+}
+
 // ============================================================================
 // Component
 // ============================================================================
 
 export default function RawMaterialsPage() {
   const [materials, setMaterials] = useState<RawMaterial[]>([])
+  const [categories, setCategories] = useState<RawMaterialCategory[]>([])
   const [form, setForm] = useState<FormState>(defaultForm)
+  const [categoryForm, setCategoryForm] = useState<CategoryFormState>(defaultCategoryForm)
+  const [categoryEditingId, setCategoryEditingId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<RawMaterial | null>(null)
+  const [categoryDeleteTarget, setCategoryDeleteTarget] = useState<RawMaterialCategory | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [categorySaving, setCategorySaving] = useState(false)
+  const [categoryDeleting, setCategoryDeleting] = useState(false)
   const { showToast } = useToast()
   const editingMaterial = materials.find(m => m.id === editingId) || null
+
+  const activeCategories = categories.filter(category => category.isActive !== false)
+  const otherCategory = categories.find(category => normalizeText(category.name) === 'other') || null
 
   useEffect(() => {
     loadData()
@@ -151,8 +183,18 @@ export default function RawMaterialsPage() {
     try {
       setLoading(true)
       await initSupabase()
-      const list = await fetchRawMaterials()
+      const [list, categoryList] = await Promise.all([
+        fetchRawMaterials(),
+        fetchRawMaterialCategories()
+      ])
       setMaterials(list as RawMaterial[])
+      setCategories(categoryList as RawMaterialCategory[])
+      const defaultCategory = (categoryList as RawMaterialCategory[]).find(
+        category => normalizeText(category.name) === 'other'
+      )
+      if (defaultCategory && !editingId) {
+        setForm(prev => prev.categoryId ? prev : { ...prev, categoryId: defaultCategory.id })
+      }
     } catch (err) {
       console.error('Failed to load raw materials:', err)
       setError('Failed to load raw materials.')
@@ -163,6 +205,7 @@ export default function RawMaterialsPage() {
 
   function validateForm(): string | null {
     if (!form.name.trim()) return 'Material name is required.'
+    if (!form.categoryId && !otherCategory) return 'Create or select a material category.'
     return null
   }
 
@@ -178,13 +221,15 @@ export default function RawMaterialsPage() {
       setSaving(true)
 
       const code = generateRMCode(form.name.trim())
+      const selectedCategory = categories.find(category => category.id === (form.categoryId || otherCategory?.id))
 
       const payload = {
         id: editingId || undefined,
         name: form.name.trim(),
         code,
         qty: Number(form.qty) || 0,
-        category: form.category.trim() || null,
+        categoryId: form.categoryId || otherCategory?.id || null,
+        category: selectedCategory?.name || form.category.trim() || null,
         location: form.location.trim() || null,
         coaLink: form.coaLink.trim() || null,
         comments: form.comments.trim() || null,
@@ -208,6 +253,52 @@ export default function RawMaterialsPage() {
     }
   }
 
+  async function handleCategorySave() {
+    setError('')
+    if (!categoryForm.name.trim()) {
+      setError('Category name is required.')
+      return
+    }
+
+    try {
+      setCategorySaving(true)
+      await saveRawMaterialCategory({
+        id: categoryEditingId || undefined,
+        name: categoryForm.name.trim(),
+        description: categoryForm.description.trim() || null,
+        isActive: categoryForm.isActive
+      })
+      showToast({
+        message: categoryEditingId ? 'Category updated' : 'Category created',
+        type: 'success'
+      })
+      resetCategoryForm()
+      await loadData()
+    } catch (err) {
+      console.error('Failed to save category:', err)
+      setError('Failed to save category.')
+    } finally {
+      setCategorySaving(false)
+    }
+  }
+
+  async function handleCategoryDelete() {
+    if (!categoryDeleteTarget) return
+
+    try {
+      setCategoryDeleting(true)
+      await deleteRawMaterialCategory(categoryDeleteTarget.id)
+      setCategories(prev => prev.filter(category => category.id !== categoryDeleteTarget.id))
+      setCategoryDeleteTarget(null)
+      showToast({ message: 'Category deleted', type: 'success' })
+    } catch (err) {
+      console.error('Failed to delete category:', err)
+      showToast({ message: 'Cannot delete category while raw materials use it', type: 'error' })
+    } finally {
+      setCategoryDeleting(false)
+    }
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return
 
@@ -226,10 +317,14 @@ export default function RawMaterialsPage() {
   }
 
   function startEdit(material: RawMaterial) {
+    const matchedCategory = material.categoryId
+      ? categories.find(category => category.id === material.categoryId)
+      : categories.find(category => normalizeText(category.name) === normalizeText(material.category || ''))
     setEditingId(material.id)
     setForm({
       name: material.name || '',
       qty: material.qty?.toString() || '',
+      categoryId: matchedCategory?.id || otherCategory?.id || '',
       category: material.category || '',
       location: material.location || '',
       coaLink: material.coaLink || '',
@@ -240,10 +335,24 @@ export default function RawMaterialsPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  function startCategoryEdit(category: RawMaterialCategory) {
+    setCategoryEditingId(category.id)
+    setCategoryForm({
+      name: category.name || '',
+      description: category.description || '',
+      isActive: category.isActive !== false
+    })
+  }
+
   function resetForm() {
-    setForm(defaultForm)
+    setForm({ ...defaultForm, categoryId: otherCategory?.id || '' })
     setEditingId(null)
     setError('')
+  }
+
+  function resetCategoryForm() {
+    setCategoryForm(defaultCategoryForm)
+    setCategoryEditingId(null)
   }
 
   // Preview the generated code as user types
@@ -305,12 +414,21 @@ export default function RawMaterialsPage() {
             />
           </div>
           <div>
-            <Label>Family / Category</Label>
-            <Input
-              value={form.category}
-              onChange={e => setForm({ ...form, category: e.target.value })}
-              placeholder="e.g., Red Clover Extract"
-            />
+            <Label>Category</Label>
+            <Select
+              value={form.categoryId}
+              onChange={e => {
+                const category = categories.find(item => item.id === e.target.value)
+                setForm({ ...form, categoryId: e.target.value, category: category?.name || '' })
+              }}
+            >
+              <option value="">-- Select Category --</option>
+              {activeCategories.map(category => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </Select>
           </div>
           <div>
             <Label>Location</Label>
@@ -348,6 +466,68 @@ export default function RawMaterialsPage() {
         </div>
       </Card>
 
+      <Card
+        title="Raw Material Categories"
+        actions={(
+          <div className="flex gap-2">
+            {categoryEditingId && (
+              <Button variant="ghost" onClick={resetCategoryForm}>Cancel</Button>
+            )}
+            <Button onClick={handleCategorySave} loading={categorySaving}>
+              {categorySaving ? 'Saving...' : categoryEditingId ? 'Update Category' : 'Create Category'}
+            </Button>
+          </div>
+        )}
+      >
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] md:items-end">
+          <div>
+            <Label>Category Name</Label>
+            <Input
+              value={categoryForm.name}
+              onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })}
+              placeholder="e.g., Botanical Extracts"
+            />
+          </div>
+          <div>
+            <Label>Description</Label>
+            <TextArea
+              rows={1}
+              value={categoryForm.description}
+              onChange={e => setCategoryForm({ ...categoryForm, description: e.target.value })}
+              placeholder="Optional category notes"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="subtle"
+            onClick={() => setCategoryForm({ ...categoryForm, name: 'Other', description: 'Default category for uncategorized raw materials.' })}
+          >
+            Other
+          </Button>
+        </div>
+
+        <div className="mt-4 divide-y divide-zinc-200 border-y border-zinc-200">
+          {categories.length === 0 ? (
+            <div className="py-3 text-sm text-zinc-500">No categories found.</div>
+          ) : (
+            categories.map(category => (
+              <div key={category.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="font-semibold">{category.name}</div>
+                  <div className="text-sm text-zinc-500">{category.description || '-'}</div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="subtle" size="sm" onClick={() => startCategoryEdit(category)}>Edit</Button>
+                  {normalizeText(category.name) !== 'other' && (
+                    <Button variant="danger" size="sm" onClick={() => setCategoryDeleteTarget(category)}>Delete</Button>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+
       {/* Table */}
       <Card title="All Raw Materials">
         <Table>
@@ -356,6 +536,7 @@ export default function RawMaterialsPage() {
               <TableHead className="w-12">Sr</TableHead>
               <TableHead>RM Code</TableHead>
               <TableHead>Raw Material name</TableHead>
+              <TableHead>Category</TableHead>
               <TableHead>Remaining Qty (KG)</TableHead>
               <TableHead>COA Link</TableHead>
               <TableHead>Comments</TableHead>
@@ -364,9 +545,9 @@ export default function RawMaterialsPage() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoading colSpan={7} />
+              <TableLoading colSpan={8} />
             ) : materials.length === 0 ? (
-              <TableEmpty colSpan={7} message="No raw materials yet. Add your first material!" />
+              <TableEmpty colSpan={8} message="No raw materials yet. Add your first material!" />
             ) : (
               materials.map((material, index) => (
                 <TableRow
@@ -377,6 +558,7 @@ export default function RawMaterialsPage() {
                   <TableCell className="text-zinc-500">{index + 1}</TableCell>
                   <TableCell className="font-mono font-semibold">{material.code}</TableCell>
                   <TableCell>{material.name}</TableCell>
+                  <TableCell>{material.category || categories.find(category => category.id === material.categoryId)?.name || '-'}</TableCell>
                   <TableCell>{material.qty ?? 0}</TableCell>
                   <TableCell>{material.coaLink || '-'}</TableCell>
                   <TableCell>{material.comments || '-'}</TableCell>
@@ -398,6 +580,16 @@ export default function RawMaterialsPage() {
         confirmLabel="Delete"
         variant="danger"
         loading={deleting}
+      />
+      <ConfirmDialog
+        open={!!categoryDeleteTarget}
+        onClose={() => setCategoryDeleteTarget(null)}
+        onConfirm={handleCategoryDelete}
+        title="Delete Category?"
+        description={`Are you sure you want to delete "${categoryDeleteTarget?.name}"? Categories used by raw materials cannot be deleted.`}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={categoryDeleting}
       />
     </div>
   )

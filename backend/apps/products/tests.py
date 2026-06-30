@@ -38,6 +38,7 @@ class ProductServiceTests(SimpleTestCase):
                         "id": "11111111-1111-1111-1111-111111111111",
                         "code": "RM001",
                         "name": "Ashwagandha",
+                        "category_id": "22222222-2222-2222-2222-222222222222",
                     }
                 ]
             )
@@ -62,7 +63,19 @@ class ProductServiceTests(SimpleTestCase):
 
         payload = mocked_create.call_args.args[0]
         self.assertIsNone(payload["npn"])
+        self.assertEqual(payload["type"], "capsule")
+        self.assertEqual(payload["rm"][0]["categoryId"], "22222222-2222-2222-2222-222222222222")
         self.assertEqual(payload["rm"][0]["labelClaimMgPerUnit"], 500)
+
+    @patch.object(TableService, "create", return_value={"id": "product-id"})
+    def test_product_type_is_accepted_on_create(self, mocked_create):
+        ProductService.create({"name": "Softgel Product", "type": "softgel", "rm": []})
+
+        self.assertEqual(mocked_create.call_args.args[0]["type"], "softgel")
+
+    def test_invalid_product_type_is_rejected(self):
+        with self.assertRaisesMessage(ServiceError, "Invalid product type"):
+            ProductService.create({"name": "Bad Product", "type": "cream", "rm": []})
 
     def test_formula_material_id_is_verified_and_canonicalized(self):
         client = MagicMock()

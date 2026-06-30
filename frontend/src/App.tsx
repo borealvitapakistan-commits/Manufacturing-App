@@ -38,6 +38,9 @@ function Layout() {
           <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/finished-goods" element={<FinishedGoodsPage />} />
           <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+          <Route path="/mixing" element={<MixingPage />} />
+          <Route path="/njp" element={<NJPPage />} />
+          <Route path="/batch" element={<BatchesPage />} />
           <Route path="/batches" element={<BatchesPage />} />
           <Route path="/batches/workflow" element={<WorkflowPage />} />
           <Route path="/batches/new" element={<NewBatchPage />} />

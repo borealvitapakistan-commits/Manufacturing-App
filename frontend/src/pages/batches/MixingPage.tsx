@@ -32,6 +32,7 @@ import {
   fetchMixingReports,
   fetchNJPReports,
   fetchAssemblyReports,
+  updateBatchStageLifecycle,
   saveMixingReportWithDeduction
 } from '@/lib/supabase/data'
 import { StagePrintButton } from '@/components/reports/StagePrintButton'
@@ -167,6 +168,12 @@ function toDateInput(ts: number | { seconds: number } | null | undefined): strin
   return d.toISOString().slice(0, 10)
 }
 
+function dateInputToMs(value: string): number | null {
+  if (!value) return null
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? null : date.getTime()
+}
+
 function formatDate(ts: number | { seconds: number } | null | undefined): string {
   const d = toDate(ts)
   if (!d || isNaN(d.getTime())) return '—'
@@ -279,7 +286,7 @@ function BatchTable({
           batches.map(batch => {
             const st = statusMap[batch.id] || {} as BatchStatusInfo
             const status = st.status || deriveStatusFromFlags(batch)
-            const disabled = status !== 'mixingPending'
+            const disabled = status !== 'mixingPending' && !st.mixing
 
             return (
               <TableRow
@@ -348,12 +355,17 @@ function MixingFormModal({
   assembly?: AssemblyReport | null
   mixingReport?: MixingReport | null
   onClose: () => void
-  onSaved: () => void
+  onSaved: (options?: { timingOnly?: boolean }) => void
 }) {
   const { showToast } = useToast()
   const locked = Boolean(mixingReport?.id && !isStageInProgress('mixing', mixingReport))
 
-  const [mixingDate, setMixingDate] = useState(toDateInput(mixingReport?.mixingDate) || '')
+  const [startDate, setStartDate] = useState(
+    toDateInput(mixingReport?.startDate ?? mixingReport?.mixingDate) || ''
+  )
+  const [endDate, setEndDate] = useState(
+    toDateInput(mixingReport?.endDate ?? mixingReport?.mixingDate) || ''
+  )
   const [startTime, setStartTime] = useState(mixingReport?.startTime || '')
   const [endTime, setEndTime] = useState(mixingReport?.endTime || '')
   const [mixedPowderName, setMixedPowderName] = useState(mixingReport?.mixedPowderName || '')
@@ -509,6 +521,8 @@ function MixingFormModal({
         return
       }
 
+      const startDateMs = dateInputToMs(startDate)
+      const endDateMs = dateInputToMs(endDate)
       const reportData = {
         id: mixingReport?.id,
         batchId: batch.id,
@@ -517,10 +531,10 @@ function MixingFormModal({
         brandName: batch.brandName,
         productId: batch.productId,
         productName: batch.productName,
-        mixingDate: mixingDate ? new Date(mixingDate).getTime() : null,
-        startDate: mixingReport?.startDate ?? (mixingDate ? new Date(mixingDate).getTime() : null),
+        mixingDate: endDateMs ?? startDateMs,
+        startDate: startDateMs,
         startTime: startTime || null,
-        endDate: mixingDate ? new Date(mixingDate).getTime() : null,
+        endDate: endDateMs,
         endTime: endTime || null,
         status: mixingReport?.status || undefined,
         mixedPowderName: mixedPowderName || null,
@@ -567,6 +581,32 @@ function MixingFormModal({
     }
   }
 
+  const saveTimingOnly = async () => {
+    try {
+      setSaving(true)
+      setError('')
+
+      await updateBatchStageLifecycle(batch.id, 'mixing', {
+        startDate: dateInputToMs(startDate),
+        startTime: startTime || null,
+        endDate: dateInputToMs(endDate),
+        endTime: endTime || null,
+        status: mixingReport?.status,
+        remarks: mixingReport?.remarks ?? null,
+        reason: mixingReport?.reason ?? null
+      })
+
+      showToast({ message: 'Mixing timing updated', type: 'success' })
+      onSaved({ timingOnly: true })
+    } catch (err: unknown) {
+      console.error('Mixing timing update failed:', err)
+      const message = err instanceof Error ? err.message : 'Failed to update mixing timing.'
+      setError(message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <>
       <Modal
@@ -603,29 +643,34 @@ function MixingFormModal({
               <Input value={assembly ? formatDate(assembly.productionDate) : '—'} disabled />
             </div>
             <div>
-              <Label>Mixing Date</Label>
+              <Label>Mixing Start Date</Label>
               <Input
                 type="date"
-                value={mixingDate}
-                disabled={locked}
-                onChange={e => setMixingDate(e.target.value)}
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
               />
             </div>
             <div>
-              <Label>Blending Start Time</Label>
+              <Label>Mixing Start Time</Label>
               <Input
                 type="time"
                 value={startTime}
-                disabled={locked}
                 onChange={e => setStartTime(e.target.value)}
               />
             </div>
             <div>
-              <Label>Blending End Time</Label>
+              <Label>Mixing End Date</Label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Mixing End Time</Label>
               <Input
                 type="time"
                 value={endTime}
-                disabled={locked}
                 onChange={e => setEndTime(e.target.value)}
               />
             </div>
@@ -765,7 +810,15 @@ function MixingFormModal({
           <div className="flex gap-2 justify-end pt-4 border-t border-zinc-200">
             <Button variant="subtle" onClick={() => window.print()}>Print</Button>
             <Button variant="ghost" onClick={onClose}>Close</Button>
-            {!locked && (
+            {locked ? (
+              <Button
+                onClick={saveTimingOnly}
+                loading={saving}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save Timing'}
+              </Button>
+            ) : (
               <Button
                 onClick={finalizeMixing}
                 loading={saving}
@@ -940,7 +993,7 @@ export default function MixingReportsPage() {
 
         if (!targetBatch || !targetStatus) {
           setError('The selected batch was not found for this brand.')
-        } else if ((targetStatus.status || targetBatch.status) !== 'mixingPending') {
+        } else if ((targetStatus.status || targetBatch.status) !== 'mixingPending' && !targetStatus.mixing) {
           setError('This batch is not in Mixing stage.')
         } else {
           setSelectedBatch(targetBatch)
@@ -979,7 +1032,7 @@ export default function MixingReportsPage() {
     const st = status || statusMap[batch.id] || {} as BatchStatusInfo
     const batchStatus = st.status || batch.status
 
-    if (batchStatus && batchStatus !== 'mixingPending') {
+    if (batchStatus && batchStatus !== 'mixingPending' && !st.mixing) {
       setError('This batch is not in Mixing stage.')
       return
     }
@@ -988,13 +1041,15 @@ export default function MixingReportsPage() {
     setSelectedMeta(st)
   }
 
-  const handleMixingSaved = () => {
+  const handleMixingSaved = (options?: { timingOnly?: boolean }) => {
     setSelectedBatch(null)
     setSelectedMeta(null)
     if (selectedBrand) {
       loadBrandData(selectedBrand)
     }
-    showToast({ message: 'Mixing complete. Send to NJP next.', type: 'success' })
+    if (!options?.timingOnly) {
+      showToast({ message: 'Mixing complete. Send to NJP next.', type: 'success' })
+    }
   }
 
   const handleBackToBrands = () => {
