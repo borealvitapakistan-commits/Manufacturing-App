@@ -12,6 +12,7 @@ from services.batch_service import (
     NJPService,
     StageLifecycleService,
 )
+from services.local_mixing_service import LocalMixingService
 
 
 class BatchServiceUnitTests(SimpleTestCase):
@@ -259,6 +260,74 @@ class BatchServiceUnitTests(SimpleTestCase):
         self.assertEqual(update_payload["status"], "assemblyPending")
         self.assertEqual(update_payload["currentStage"], "assembly")
 
+    def test_local_mixing_creates_standalone_record_with_own_code_and_total(self):
+        class MemoryStore:
+            def __init__(self):
+                self.value = []
+
+            def read(self):
+                return self.value
+
+            def write(self, value):
+                self.value = value
+
+        original_store = LocalMixingService.store
+        LocalMixingService.store = MemoryStore()
+        try:
+            record = LocalMixingService.create(
+                {
+                    "brandId": "brand-id",
+                    "brandName": "Paragon Health Foods",
+                    "productId": "product-id",
+                    "productName": "Amla",
+                    "startDate": 1782518400000,
+                    "startTime": "09:00",
+                    "mixedPowderName": "Existing Amla Powder",
+                    "existingMixedPowderUsedKg": 2,
+                    "byBookRawMaterials": [
+                        {"rawMaterialName": "Raw material 1", "usedQtyKg": 3}
+                    ],
+                    "pragmaticRawMaterials": [
+                        {"rawMaterialName": "Raw material 4", "usedQtyKg": 1.5}
+                    ],
+                    "nonMedUsage": [
+                        {"rawMaterialName": "Silica", "usedQtyKg": 0.25}
+                    ],
+                }
+            )
+
+            self.assertTrue(record["mixingCode"].startswith("MIX-"))
+            self.assertNotIn("batchId", record)
+            self.assertNotIn("productNumber", record)
+            self.assertEqual(record["brandId"], "brand-id")
+            self.assertEqual(record["productId"], "product-id")
+            self.assertEqual(record["productName"], "Amla")
+            self.assertEqual(record["totalFormulaQtyKg"], 6.75)
+
+            updated = LocalMixingService.update(
+                record["id"],
+                {"productName": "Amla Updated"},
+            )
+            self.assertEqual(updated["productName"], "Amla Updated")
+            self.assertEqual(len(updated["byBookRawMaterials"]), 1)
+            self.assertEqual(updated["totalFormulaQtyKg"], 6.75)
+
+            with self.assertRaisesMessage(ServiceError, "Mixing code already exists"):
+                LocalMixingService.create(
+                    {
+                        "brandId": "brand-id",
+                        "brandName": "Paragon Health Foods",
+                        "productId": "product-id",
+                        "productName": "Amla",
+                        "mixingCode": record["mixingCode"],
+                        "byBookRawMaterials": [
+                            {"rawMaterialName": "Raw material 1", "usedQtyKg": 1}
+                        ],
+                    }
+                )
+        finally:
+            LocalMixingService.store = original_store
+
 
 class BatchAPITests(SimpleTestCase):
     batch_id = "11111111-1111-1111-1111-111111111111"
@@ -292,6 +361,55 @@ class BatchAPITests(SimpleTestCase):
         response = self.client.post("/api/batches", {"notes": "missing data"}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "Validation failed")
+
+    def test_standalone_mixing_slashless_api_uses_local_store(self):
+        class MemoryStore:
+            def __init__(self):
+                self.value = []
+
+            def read(self):
+                return self.value
+
+            def write(self, value):
+                self.value = value
+
+        original_store = LocalMixingService.store
+        LocalMixingService.store = MemoryStore()
+        try:
+            response = self.client.post(
+                "/api/mixing",
+                {
+                    "brandId": self.batch_id,
+                    "brandName": "Boreal Vita",
+                    "productId": self.batch_id,
+                    "productName": "Ashwagandha with pepper",
+                    "byBookRawMaterials": [
+                        {"rawMaterialName": "Ashwagandha 4:1", "usedQtyKg": "2.5"}
+                    ],
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, 201)
+            record = response.json()["data"]
+            self.assertEqual(record["mixingCode"], "MIX-0001")
+            self.assertEqual(record["totalFormulaQtyKg"], 2.5)
+
+            list_response = self.client.get("/api/mixing")
+            self.assertEqual(list_response.status_code, 200)
+            self.assertEqual(len(list_response.json()["data"]), 1)
+
+            patch_response = self.client.patch(
+                f"/api/mixing/{record['id']}",
+                {"mixingCode": "MIX-MANUAL"},
+                format="json",
+            )
+            self.assertEqual(patch_response.status_code, 200)
+            self.assertEqual(patch_response.json()["data"]["mixingCode"], "MIX-MANUAL")
+
+            delete_response = self.client.delete(f"/api/mixing/{record['id']}")
+            self.assertEqual(delete_response.status_code, 200)
+        finally:
+            LocalMixingService.store = original_store
 
     def test_oil_batch_requires_units_per_container(self):
         response = self.client.post(

@@ -12,6 +12,7 @@ from services.batch_service import (
     NJPService,
     StageLifecycleService,
 )
+from services.local_mixing_service import LocalMixingService
 
 from .serializers import (
     AssemblySerializer,
@@ -19,7 +20,16 @@ from .serializers import (
     MixingSerializer,
     NJPSerializer,
     StageLifecycleSerializer,
+    StandaloneMixingSerializer,
 )
+
+
+def _safe_limit(value, default=500, max_limit=2000):
+    try:
+        limit = int(value or default)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(limit, max_limit))
 
 
 class BatchListCreateView(TableListCreateView):
@@ -84,6 +94,48 @@ class MixingView(APIView):
         return Response({"data": MixingService.delete_by_batch(str(item_id))})
 
 
+class StandaloneMixingListCreateView(APIView):
+    def get(self, request):
+        return Response(
+            {
+                "data": LocalMixingService.list(
+                    brand_id=request.query_params.get("brandId") or None,
+                    product_id=request.query_params.get("productId") or None,
+                    mixing_code=request.query_params.get("mixingCode") or None,
+                    search=(
+                        request.query_params.get("search")
+                        or request.query_params.get("q")
+                        or None
+                    ),
+                    limit=_safe_limit(request.query_params.get("limit")),
+                )
+            }
+        )
+
+    def post(self, request):
+        serializer = StandaloneMixingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = LocalMixingService.create(serializer.validated_data)
+        return Response({"data": data}, status=status.HTTP_201_CREATED)
+
+
+class StandaloneMixingDetailView(APIView):
+    def get(self, request, item_id):
+        return Response({"data": LocalMixingService.get(str(item_id))})
+
+    def put(self, request, item_id):
+        serializer = StandaloneMixingSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        return Response(
+            {"data": LocalMixingService.update(str(item_id), serializer.validated_data)}
+        )
+
+    patch = put
+
+    def delete(self, request, item_id):
+        return Response({"data": LocalMixingService.delete(str(item_id))})
+
+
 class StageView(APIView):
     service_class = None
     serializer_class = OpenPayloadSerializer
@@ -100,6 +152,7 @@ class StageView(APIView):
     def put(self, request, item_id):
         serializer = self.serializer_class(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+
         update_for_batch = getattr(self.service_class, "update_for_batch", None)
         if update_for_batch:
             data = update_for_batch(str(item_id), serializer.validated_data)
@@ -109,6 +162,7 @@ class StageView(APIView):
                 str(report["id"]),
                 serializer.validated_data,
             )
+
         return Response({"data": data})
 
     patch = put
@@ -165,8 +219,10 @@ class StageEndView(APIView):
         serializer_class = self.serializers.get(str(stage))
         if serializer_class is None:
             raise ServiceError("Unknown manufacturing stage", 400)
-        serializer = serializer_class(data=request.data)
+
+        serializer = serializer_class(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+
         data = StageLifecycleService.complete_stage(
             str(item_id),
             str(stage),
@@ -179,6 +235,7 @@ class TimelineView(APIView):
     def get(self, request, item_id):
         batch_id = str(item_id)
         data = {"batch": BatchService.get(batch_id)}
+
         for key, service in (
             ("mixing", MixingService),
             ("njp", NJPService),
@@ -188,6 +245,7 @@ class TimelineView(APIView):
                 data[key] = service.get_by_batch(batch_id)
             except Exception:
                 data[key] = None
+
         return Response({"data": data})
 
 
@@ -196,15 +254,21 @@ class StageReportListView(APIView):
 
     def get(self, request):
         filters = {}
+
         if request.query_params.get("batchId"):
             filters["batch_id"] = request.query_params["batchId"]
+
         if request.query_params.get("brandId"):
             filters["brand_id"] = request.query_params["brandId"]
+
+        if request.query_params.get("productId"):
+            filters["product_id"] = request.query_params["productId"]
+
         return Response(
             {
                 "data": self.service_class.list(
                     filters=filters,
-                    limit=int(request.query_params.get("limit", 500)),
+                    limit=_safe_limit(request.query_params.get("limit")),
                 )
             }
         )

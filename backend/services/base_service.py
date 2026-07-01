@@ -1,6 +1,9 @@
 from typing import Any
 
+from django.conf import settings
+
 from .converters import payload_to_db, row_to_app, rows_to_app
+from .local_supabase import LocalSupabaseClient
 from .supabase_client import SupabaseConfigurationError, get_supabase
 
 
@@ -27,9 +30,14 @@ def translate_error(error: Exception) -> ServiceError:
 
 class TableService:
     table_name = ""
+    _local_client: LocalSupabaseClient | None = None
 
     @classmethod
     def client(cls):
+        if settings.LOCAL_DATA_MODE:
+            if TableService._local_client is None:
+                TableService._local_client = LocalSupabaseClient()
+            return TableService._local_client
         return get_supabase()
 
     @classmethod

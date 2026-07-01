@@ -248,6 +248,31 @@ export const fetchNJPReports = (options?: { batchId?: string; brandId?: string }
 export const fetchAssemblyReports = (options?: { batchId?: string; brandId?: string }) =>
   fetchStage('assembly-reports', options)
 
+export async function fetchLocalMixings(options?: { brandId?: string; limit?: number }) {
+  return unwrap(
+    await api.get<Data<AnyRecord[]>>(
+      `/mixing${query({ ...options, limit: options?.limit ?? 500 })}`
+    )
+  )
+}
+
+export async function fetchLocalMixing(id: string) {
+  return unwrap(await api.get<Data<AnyRecord>>(`/mixing/${id}`))
+}
+
+export async function saveLocalMixing(record: AnyRecord) {
+  const { id, createdAt, updatedAt, totalFormulaQtyKg, ...payload } = record
+  return unwrap(
+    id
+      ? await api.put<Data<AnyRecord>>(`/mixing/${id}`, payload)
+      : await api.post<Data<AnyRecord>>('/mixing', payload)
+  )
+}
+
+export async function deleteLocalMixing(id: string) {
+  return unwrap(await api.delete<Data<AnyRecord>>(`/mixing/${id}`))
+}
+
 export async function startBatchStage(
   batchId: string,
   stage: ManufacturingStage,

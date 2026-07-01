@@ -55,13 +55,16 @@ const traceabilityModules: ModuleLink[] = [
   }
 ]
 
-const underDevelopmentModules: ModuleLink[] = [
+const setupModules: ModuleLink[] = [
   {
     href: '/brands',
     title: 'Brands',
-    description: 'Brand setup remains available while the traceability flow is finalized.',
-    type: 'Under development'
-  },
+    description: 'Maintain brand codes, identity and active status.',
+    type: 'Setup'
+  }
+]
+
+const underDevelopmentModules: ModuleLink[] = [
   {
     href: '/vendors',
     title: 'Vendors',
@@ -174,6 +177,11 @@ export default function HomePage() {
       <section>
         <h2 className="text-lg font-semibold">Traceability Core</h2>
         <ModuleRows modules={traceabilityModules} />
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold">Setup</h2>
+        <ModuleRows modules={setupModules} />
       </section>
 
       <section>

@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Ashwagandha with pepper",
+    "type": "capsule",
+    "npn": "801299999",
+    "rm": [
+      {
+        "sr": 1,
+        "rawMaterial": "Ashwagandha 4:1",
+        "rawMaterialCode": "RM-ASH-4:1",
+        "rawMaterialId": "6d7bc7b4-96ce-4ddf-9147-315e19808bf5",
+        "categoryId": "51aed359-36bd-48c5-b576-5dd380297b08",
+        "labelClaim": "350 mg",
+        "labelClaimMgPerUnit": 350.0
+      },
+      {
+        "sr": 2,
+        "rawMaterial": "Black pepper",
+        "rawMaterialCode": "RM-BLA_PEP",
+        "rawMaterialId": "16bd7ded-313d-42d3-971a-6c6df54f77f1",
+        "categoryId": "51aed359-36bd-48c5-b576-5dd380297b08",
+        "labelClaim": "50 mg",
+        "labelClaimMgPerUnit": 50.0
+      }
+    ],
+    "id": "a4cb1f3a-6345-4262-9b87-2e58aaf0921a",
+    "created_at": "2026-07-01T11:38:01.778167Z",
+    "updated_at": "2026-07-01T11:38:01.778167Z"
+  }
+]

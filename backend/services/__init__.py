@@ -1,1 +1,1 @@
-"""Supabase-backed business services."""
+"""Business services with switchable local JSON or Supabase persistence."""

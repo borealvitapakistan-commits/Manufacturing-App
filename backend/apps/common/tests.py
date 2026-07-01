@@ -14,6 +14,15 @@ class CommonAPITests(SimpleTestCase):
     def setUp(self):
         self.client = APIClient()
 
+    @override_settings(LOCAL_DATA_MODE=True)
+    def test_health_reports_local_data_mode(self):
+        response = self.client.get("/api/health/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertTrue(response.json()["localDataMode"])
+        self.assertEqual(response.json()["database"], "local-json")
+
+    @override_settings(LOCAL_DATA_MODE=False)
     @patch("apps.common.views.get_supabase")
     def test_health_checks_live_supabase_connection(self, mocked_get_supabase):
         response = self.client.get("/api/health/")
@@ -22,14 +31,24 @@ class CommonAPITests(SimpleTestCase):
         self.assertTrue(response.json()["supabaseConnected"])
         self.assertEqual(response.json()["database"], "supabase")
 
-    @override_settings(SUPABASE_URL="", SUPABASE_SERVICE_ROLE_KEY="", SUPABASE_ANON_KEY="")
+    @override_settings(
+        LOCAL_DATA_MODE=False,
+        SUPABASE_URL="",
+        SUPABASE_SERVICE_ROLE_KEY="",
+        SUPABASE_ANON_KEY="",
+    )
     def test_health_returns_503_without_supabase(self):
         response = self.client.get("/api/health/")
         self.assertEqual(response.status_code, 503)
         self.assertFalse(response.json()["ok"])
         self.assertFalse(response.json()["supabaseConnected"])
 
-    @override_settings(SUPABASE_URL="", SUPABASE_SERVICE_ROLE_KEY="", SUPABASE_ANON_KEY="")
+    @override_settings(
+        LOCAL_DATA_MODE=False,
+        SUPABASE_URL="",
+        SUPABASE_SERVICE_ROLE_KEY="",
+        SUPABASE_ANON_KEY="",
+    )
     def test_unconfigured_data_endpoint_returns_503(self):
         response = self.client.get("/api/brands")
         self.assertEqual(response.status_code, 503)

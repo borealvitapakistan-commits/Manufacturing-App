@@ -1,4 +1,4 @@
-"""Django API settings. Supabase is the only persistence layer."""
+"""Django API settings."""
 
 import os
 from pathlib import Path
@@ -56,8 +56,9 @@ TEMPLATES: list[dict] = []
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-# Django's ORM is intentionally disabled. Services access Supabase directly.
+# Django's ORM is intentionally disabled.
 DATABASES: dict = {}
+LOCAL_DATA_MODE = env_bool("LOCAL_DATA_MODE", True)
 
 
 # Password validation

@@ -1,17 +1,20 @@
 // ============================================================================
 // Mixing Reports Page - Native Next.js Implementation
+// Standalone Mixing with multi-day timing, editable RM/NMI rows, and disclaimer
 // ============================================================================
 
 'use client'
 
-import { useEffect, useState, useMemo, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Card,
   Button,
   Input,
   NumberInput,
   Label,
+  Checkbox,
+  Select,
+  TextArea,
   Table,
   TableHeader,
   TableBody,
@@ -19,29 +22,129 @@ import {
   TableHead,
   TableCell,
   TableEmpty,
-  Badge,
   Modal,
   useToast
 } from '@/components/ui'
 import {
-  initSupabase,
+  deleteLocalMixing,
   fetchBrands,
-  fetchBatches,
+  fetchLabelInventory,
+  fetchLocalMixings,
   fetchProducts,
   fetchRawMaterials,
-  fetchMixingReports,
-  fetchNJPReports,
-  fetchAssemblyReports,
-  updateBatchStageLifecycle,
-  saveMixingReportWithDeduction
+  saveLocalMixing
 } from '@/lib/supabase/data'
-import { StagePrintButton } from '@/components/reports/StagePrintButton'
-import { isStageCompleted, isStageInProgress } from '@/lib/utils'
-import type { Brand, BatchStatus } from '@/types'
+import type { Brand } from '@/types'
 
-// ============================================================================
-// Types
-// ============================================================================
+const EDIT_DISCLAIMER =
+  'This mixing record is fully editable. If any raw material is added, removed, or any dose/quantity is changed, the updated saved version will be treated as the effective mixing record and should be reviewed before use.'
+
+// NMI raw materials come from the Raw Material category named MMA.
+const NMI_CATEGORY = 'MMA'
+
+
+interface LocalMixingSession {
+  date?: number | null
+  startDate?: number | null
+  startTime?: string | null
+  endDate?: number | null
+  endTime?: string | null
+  remarks?: string | null
+}
+
+interface LocalMixingSessionForm {
+  date: string
+  startTime: string
+  endTime: string
+  remarks: string
+}
+
+interface LocalMixingRow {
+  clNo?: number
+  rawMaterialId?: string
+  rawMaterialCode?: string
+  rawMaterialName: string
+  name?: string
+
+  rmCategoryId?: string
+  rmCategoryCode?: string
+  rmCategoryName?: string
+  rawMaterialCategoryId?: string
+  rawMaterialCategoryCode?: string
+  rawMaterialCategoryName?: string
+  categoryId?: string
+  categoryCode?: string
+  categoryName?: string
+  category?: string
+
+  isNMI?: boolean
+  isNonMedicinal?: boolean
+
+  labelClaimMgPerUnit?: string | number | null
+  doseMg?: string | number | null
+  usedQtyKg: string
+  remarks?: string | null
+}
+
+interface LocalMixingRecord {
+  id?: string
+  brandId?: string
+  brandName?: string
+  productId?: string
+  productName: string
+  mixingCode?: string
+  status?: string | null
+
+  startDate?: number | null
+  startTime?: string | null
+  endDate?: number | null
+  endTime?: string | null
+  mixingDate?: number | null
+  mixingDates?: (number | string)[]
+  mixingSessions?: LocalMixingSession[]
+
+  mixedPowderName?: string | null
+  existingMixedPowderUsedKg?: number | string | null
+  medicinalIngredients?: LocalMixingRow[]
+  nonMedicinalIngredients?: LocalMixingRow[]
+
+  // Legacy aliases kept because old saved records may still contain them.
+  byBookRawMaterials?: LocalMixingRow[]
+  pragmaticRawMaterials?: LocalMixingRow[]
+  nonMedUsage?: LocalMixingRow[]
+
+  totalKgInMixing?: number | string | null
+  totalKg?: number | string | null
+  totalMixingKg?: number | string | null
+  totalMixedQtyKg?: number | string | null
+
+  remarks?: string | null
+  reason?: string | null
+  changeReason?: string | null
+  editDisclaimer?: string | null
+  revisionNo?: number
+  totalFormulaQtyKg?: number | string
+  createdAt?: number
+  updatedAt?: number
+}
+
+interface LocalMixingFormState {
+  id?: string
+  brandId: string
+  brandName: string
+  productId: string
+  productName: string
+  mixingCode: string
+  autoGenerateCode: boolean
+  mixingSessions: LocalMixingSessionForm[]
+  mixedPowderName: string
+  existingMixedPowderUsedKg: string
+  medicinalIngredients: LocalMixingRow[]
+  nonMedicinalIngredients: LocalMixingRow[]
+  totalKgInMixing: string
+  remarks: string
+  changeReason: string
+}
 
 interface Product {
   id: string
@@ -53,131 +156,405 @@ interface RawMaterialFormula {
   rawMaterialId?: string
   rawMaterialCode?: string
   rawMaterial?: string
+  rawMaterialName?: string
   labelClaim?: string
-  labelClaimMgPerUnit?: number
+  labelClaimMgPerUnit?: number | string | null
+  doseMg?: number | string | null
+  category?: string
+  categoryName?: string
+  categoryCode?: string
+  rmCategoryId?: string
+  rmCategoryName?: string
+  rmCategoryCode?: string
+  rawMaterialCategoryId?: string
+  rawMaterialCategoryName?: string
+  rawMaterialCategoryCode?: string
 }
 
 interface RawMaterial {
   id: string
   name: string
   code?: string
+  rawMaterialCode?: string
   qty?: number
   qtyKg?: number
+  category?: string
+  categoryId?: string
+  categoryName?: string
+  categoryCode?: string
+  family?: string
+  familyId?: string
+  familyName?: string
+  familyCode?: string
+  rmCategoryId?: string
+  rmCategoryName?: string
+  rmCategoryCode?: string
+  rawMaterialCategoryId?: string
+  rawMaterialCategoryName?: string
+  rawMaterialCategoryCode?: string
+  isNMI?: boolean
+  isNonMedicinal?: boolean
 }
 
-interface Batch {
+interface RmCategoryOption {
   id: string
-  batchCode: string
-  brandId: string
-  brandName?: string
-  brandCodePrefix?: string
-  productId: string
-  productName?: string
-  containerCount?: number
-  unitsPerContainer?: number
-  totalUnits?: number
-  status?: BatchStatus
-  hasMixing?: boolean
-  hasNJP?: boolean
-  hasAssembly?: boolean
-  inventoryDeducted?: boolean
-  inventoryDeductionSource?: 'none' | 'batch' | 'mixing'
-}
-
-interface MixingReport {
-  id?: string
-  batchId: string
-  mixingDate?: number | { seconds: number }
-  startDate?: number | { seconds: number } | null
-  startTime?: string | null
-  endDate?: number | { seconds: number } | null
-  endTime?: string | null
-  status?: 'In Mixing' | 'Mixing Completed'
-  remarks?: string | null
-  reason?: string | null
-  mixedPowderName?: string
-  mixedPowderQtyKg?: number
-  rmUsage?: RmUsageItem[]
-  nonMedUsage?: NonMedItem[]
-  mixingDates?: string[]
-  mixingNotes?: string
-  productName?: string
-  batchCode?: string
-  createdAt?: number | { seconds: number }
-}
-
-interface NjpReport {
-  id: string
-  batchId: string
-  productionDate?: number | { seconds: number }
-  status?: 'In NJP' | 'NJP Completed'
-}
-
-interface AssemblyReport {
-  id: string
-  batchId: string
-  productionDate?: number | { seconds: number }
-  status?: 'In Assembly' | 'Assembly Completed'
-}
-
-interface RmUsageItem {
-  clNo: number
-  rawMaterialId: string
-  rawMaterialCode: string
-  rawMaterialName: string
-  requiredQtyKgFormula: number
-  requiredQtyKgThisMix: number
-  qtyBeforeKg: number
-  qtyAfterKg: number
-}
-
-interface NonMedItem {
-  clNo: number
+  code: string
   name: string
-  requiredQtyKgFormula: number
-  requiredQtyKgThisMix: number
-  qtyBeforeKg: number
-  qtyAfterKg: number
+  isNMI?: boolean
 }
 
-interface BatchStatusInfo {
-  hasMixing: boolean
-  hasNJP: boolean
-  hasAssembly: boolean
-  status: BatchStatus
-  njp?: NjpReport | null
-  assembly?: AssemblyReport | null
-  mixing?: MixingReport | null
+const emptySessionRow = (): LocalMixingSessionForm => ({
+  date: '',
+  startTime: '',
+  endTime: '',
+  remarks: ''
+})
+
+const emptyMaterialRow = (forceNMI = false): LocalMixingRow => ({
+  rawMaterialId: '',
+  rawMaterialCode: '',
+  rawMaterialName: '',
+  rmCategoryId: forceNMI ? NMI_CATEGORY : '',
+  rmCategoryCode: forceNMI ? NMI_CATEGORY : '',
+  rmCategoryName: forceNMI ? NMI_CATEGORY : '',
+  rawMaterialCategoryId: forceNMI ? NMI_CATEGORY : '',
+  rawMaterialCategoryCode: forceNMI ? NMI_CATEGORY : '',
+  rawMaterialCategoryName: forceNMI ? NMI_CATEGORY : '',
+  category: forceNMI ? NMI_CATEGORY : '',
+  isNMI: forceNMI,
+  isNonMedicinal: forceNMI,
+  doseMg: '',
+  usedQtyKg: '',
+  remarks: ''
+})
+
+const emptyLocalMixingForm = (): LocalMixingFormState => ({
+  brandId: '',
+  brandName: '',
+  productId: '',
+  productName: '',
+  mixingCode: '',
+  autoGenerateCode: true,
+  mixingSessions: [emptySessionRow()],
+  mixedPowderName: '',
+  existingMixedPowderUsedKg: '',
+  medicinalIngredients: [emptyMaterialRow()],
+  nonMedicinalIngredients: [emptyMaterialRow(true)],
+  totalKgInMixing: '',
+  remarks: '',
+  changeReason: ''
+})
+
+function localToDateInput(value: number | string | null | undefined): string {
+  if (!value) return ''
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toISOString().slice(0, 10)
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function toDate(ts: number | { seconds: number } | null | undefined): Date | null {
-  if (!ts) return null
-  if (typeof ts === 'object' && 'seconds' in ts) {
-    return new Date(ts.seconds * 1000)
-  }
-  return new Date(ts)
-}
-
-function toDateInput(ts: number | { seconds: number } | null | undefined): string {
-  const d = toDate(ts)
-  if (!d || isNaN(d.getTime())) return ''
-  return d.toISOString().slice(0, 10)
-}
-
-function dateInputToMs(value: string): number | null {
+function localDateInputToMs(value: string): number | null {
   if (!value) return null
   const date = new Date(`${value}T00:00:00`)
   return Number.isNaN(date.getTime()) ? null : date.getTime()
 }
 
-function formatDate(ts: number | { seconds: number } | null | undefined): string {
-  const d = toDate(ts)
-  if (!d || isNaN(d.getTime())) return '—'
-  return d.toLocaleString()
+function toLocalNumber(value: string | number | null | undefined): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function optionalNumber(value: string | number | null | undefined): number | null {
+  if (value === '' || value === null || value === undefined) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function formatLocalKg(value: string | number | null | undefined): string {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed.toFixed(4) : '0.0000'
+}
+
+function formatShortDate(value: number | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString()
+}
+
+function isNmiText(value: unknown): boolean {
+  const text = String(value || '').trim().toLowerCase()
+  return [
+    'mma',
+    'nmi',
+    'non medicinal',
+    'non-medicinal',
+    'non medicinal ingredient',
+    'non-medicinal ingredient',
+    'non medicinal ingredients',
+    'non-medicinal ingredients'
+  ].includes(text)
+}
+
+function getCategoryId(item?: any | null): string {
+  return String(
+    item?.rmCategoryId ||
+      item?.rawMaterialCategoryId ||
+      item?.categoryId ||
+      (isNmiText(getCategoryName(item)) ? NMI_CATEGORY : '') ||
+      ''
+  )
+}
+
+function getCategoryCode(item?: any | null): string {
+  return String(
+    item?.rmCategoryCode ||
+      item?.rawMaterialCategoryCode ||
+      item?.categoryCode ||
+      String(item?.familyCode || '') ||
+      (isNmiText(getCategoryName(item)) ? NMI_CATEGORY : '') ||
+      ''
+  )
+}
+
+function getCategoryName(item?: any | null): string {
+  return String(
+    item?.rmCategoryName ||
+      item?.rawMaterialCategoryName ||
+      item?.categoryName ||
+      item?.category ||
+      String(item?.familyName || '') ||
+      String(item?.family || '') ||
+      ''
+  ).trim()
+}
+
+function rowIsNMI(row: Partial<LocalMixingRow | RawMaterial>): boolean {
+  return Boolean(
+    row.isNMI ||
+      row.isNonMedicinal ||
+      isNmiText(getCategoryCode(row)) ||
+      isNmiText(getCategoryName(row))
+  )
+}
+
+function categoryKeyFromRow(row: Partial<LocalMixingRow | RawMaterial | RawMaterialFormula>): string {
+  return (getCategoryId(row) || getCategoryCode(row) || getCategoryName(row)).trim()
+}
+
+function normalizeCategoryFields(row: LocalMixingRow, forceNMI = false): LocalMixingRow {
+  const isNMI = forceNMI || rowIsNMI(row)
+  const categoryId = isNMI ? NMI_CATEGORY : getCategoryId(row)
+  const categoryCode = isNMI ? NMI_CATEGORY : getCategoryCode(row)
+  const categoryName = isNMI ? NMI_CATEGORY : getCategoryName(row)
+
+  return {
+    ...row,
+    rmCategoryId: categoryId,
+    rmCategoryCode: categoryCode,
+    rmCategoryName: categoryName,
+    rawMaterialCategoryId: categoryId,
+    rawMaterialCategoryCode: categoryCode,
+    rawMaterialCategoryName: categoryName,
+    categoryId,
+    categoryCode,
+    categoryName,
+    category: categoryName || categoryCode,
+    isNMI,
+    isNonMedicinal: isNMI
+  }
+}
+
+function normalizeLocalRows(rows: LocalMixingRow[], forceNMI = false): LocalMixingRow[] {
+  return rows
+    .map((row, index) => {
+      const cleanRow = normalizeCategoryFields(
+        {
+          ...row,
+          clNo: index + 1,
+          rawMaterialId: row.rawMaterialId || '',
+          rawMaterialCode: String(row.rawMaterialCode || '').trim(),
+          rawMaterialName: String(row.rawMaterialName || row.name || '').trim(),
+          name: String(row.rawMaterialName || row.name || '').trim(),
+          labelClaimMgPerUnit: optionalNumber(row.labelClaimMgPerUnit),
+          doseMg: optionalNumber(row.doseMg),
+          usedQtyKg: String(toLocalNumber(row.usedQtyKg)),
+          remarks: String(row.remarks || '').trim()
+        },
+        forceNMI
+      )
+
+      return cleanRow
+    })
+    .filter(row => {
+      return (
+        row.rawMaterialId ||
+        row.rawMaterialCode ||
+        row.rawMaterialName ||
+        toLocalNumber(row.usedQtyKg) > 0 ||
+        optionalNumber(row.doseMg) !== null
+      )
+    })
+}
+
+function materialRowHasUserInput(row: LocalMixingRow): boolean {
+  return Boolean(
+    row.rawMaterialId ||
+      row.rawMaterialCode ||
+      row.rawMaterialName ||
+      optionalNumber(row.doseMg) !== null ||
+      toLocalNumber(row.usedQtyKg) > 0 ||
+      String(row.remarks || '').trim()
+  )
+}
+
+function validateDropdownMaterialRows(
+  rows: LocalMixingRow[],
+  options: { forceNMI?: boolean } = {}
+): string {
+  const forceNMI = options.forceNMI === true
+
+  for (const [index, row] of rows.entries()) {
+    if (!materialRowHasUserInput(row)) continue
+
+    const rowLabel = forceNMI ? `NMI row ${index + 1}` : `medicinal ingredient row ${index + 1}`
+
+    if (!row.rawMaterialId) {
+      return forceNMI
+        ? `Select NMI from dropdown in ${rowLabel}. Manual NMI name is not allowed.`
+        : `Select raw material name from dropdown in ${rowLabel}. Manual raw material name is not allowed.`
+    }
+
+    if (optionalNumber(row.doseMg) === null) {
+      return forceNMI
+        ? `Dosage mg is required in ${rowLabel}.`
+        : `MG dose used is required in ${rowLabel}.`
+    }
+
+    if (toLocalNumber(row.usedQtyKg) <= 0) {
+      return `KG used must be greater than 0 in ${rowLabel}.`
+    }
+  }
+
+  return ''
+}
+
+function normalizeSessionRows(rows: LocalMixingSessionForm[]): LocalMixingSessionForm[] {
+  const normalized = rows
+    .map(row => ({
+      date: row.date || '',
+      startTime: row.startTime || '',
+      endTime: row.endTime || '',
+      remarks: row.remarks || ''
+    }))
+    .filter(row => row.date || row.startTime || row.endTime || row.remarks)
+
+  return normalized.length ? normalized : [emptySessionRow()]
+}
+
+function sessionsToPayload(rows: LocalMixingSessionForm[]): LocalMixingSession[] {
+  return normalizeSessionRows(rows)
+    .map(row => {
+      const dateMs = localDateInputToMs(row.date)
+      return {
+        date: dateMs,
+        startDate: dateMs,
+        startTime: row.startTime || null,
+        endDate: dateMs,
+        endTime: row.endTime || null,
+        remarks: row.remarks.trim() || null
+      }
+    })
+    .filter(row => row.date || row.startTime || row.endTime || row.remarks)
+}
+
+function firstPayloadSession(rows: LocalMixingSession[]): LocalMixingSession | null {
+  return rows.length ? rows[0] : null
+}
+
+function lastPayloadSession(rows: LocalMixingSession[]): LocalMixingSession | null {
+  return rows.length ? rows[rows.length - 1] : null
+}
+
+function calculateLocalTotal(form: LocalMixingFormState): number {
+  const powderKg = form.mixedPowderName.trim()
+    ? toLocalNumber(form.existingMixedPowderUsedKg)
+    : 0
+  const rowTotal = [
+    ...form.medicinalIngredients,
+    ...form.nonMedicinalIngredients
+  ].reduce((sum, row) => sum + toLocalNumber(row.usedQtyKg), 0)
+  return Number((powderKg + rowTotal).toFixed(4))
+}
+
+function recordSessionsToForm(record: LocalMixingRecord): LocalMixingSessionForm[] {
+  if (Array.isArray(record.mixingSessions) && record.mixingSessions.length) {
+    return record.mixingSessions.map(session => ({
+      date: localToDateInput(session.date ?? session.startDate ?? null),
+      startTime: session.startTime || '',
+      endTime: session.endTime || '',
+      remarks: session.remarks || ''
+    }))
+  }
+
+  if (record.startDate || record.endDate || record.startTime || record.endTime || record.mixingDate) {
+    return [
+      {
+        date: localToDateInput(record.startDate || record.mixingDate || record.endDate || null),
+        startTime: record.startTime || '',
+        endTime: record.endTime || '',
+        remarks: record.remarks || ''
+      }
+    ]
+  }
+
+  return [emptySessionRow()]
+}
+
+function formFromLocalRecord(record?: LocalMixingRecord | null): LocalMixingFormState {
+  if (!record) return emptyLocalMixingForm()
+
+  const medicinalRows = [
+    ...(record.medicinalIngredients || []),
+    ...(record.medicinalIngredients?.length ? [] : record.byBookRawMaterials || []),
+    ...(record.medicinalIngredients?.length ? [] : record.pragmaticRawMaterials || [])
+  ].map(row => normalizeCategoryFields({ ...row, usedQtyKg: String(row.usedQtyKg ?? '') }))
+
+  const nmiRows = [
+    ...(record.nonMedicinalIngredients || []),
+    ...(record.nonMedicinalIngredients?.length ? [] : record.nonMedUsage || [])
+  ].map(row =>
+    normalizeCategoryFields({ ...row, usedQtyKg: String(row.usedQtyKg ?? '') }, true)
+  )
+
+  const savedTotalKg =
+    record.totalKgInMixing ??
+    record.totalKg ??
+    record.totalMixingKg ??
+    record.totalMixedQtyKg ??
+    record.totalFormulaQtyKg ??
+    ''
+
+  return {
+    id: record.id,
+    brandId: record.brandId || '',
+    brandName: record.brandName || '',
+    productId: record.productId || '',
+    productName: record.productName || '',
+    mixingCode: record.mixingCode || '',
+    autoGenerateCode: false,
+    mixingSessions: recordSessionsToForm(record),
+    mixedPowderName: record.mixedPowderName || '',
+    existingMixedPowderUsedKg:
+      record.existingMixedPowderUsedKg === null || record.existingMixedPowderUsedKg === undefined
+        ? ''
+        : String(record.existingMixedPowderUsedKg),
+    medicinalIngredients: medicinalRows.length ? medicinalRows : [emptyMaterialRow()],
+    nonMedicinalIngredients: nmiRows.length ? nmiRows : [emptyMaterialRow(true)],
+    totalKgInMixing: savedTotalKg === null || savedTotalKg === undefined ? '' : String(savedTotalKg),
+    remarks: record.remarks || '',
+    changeReason: record.changeReason || record.reason || ''
+  }
 }
 
 function parseLabelClaimToMg(label: string = ''): number | null {
@@ -185,962 +562,1075 @@ function parseLabelClaimToMg(label: string = ''): number | null {
   const m = s.match(/([0-9]+(?:\.[0-9]+)?)/)
   if (!m) return null
   const val = parseFloat(m[1])
-  if (!isFinite(val)) return null
+  if (!Number.isFinite(val)) return null
   if (s.includes(' mcg') || s.includes('µg') || s.includes(' ug')) return val / 1000
   if (s.includes(' g')) return val * 1000
   return val
 }
 
-function deriveStatusFromFlags(flags: {
-  hasMixing?: boolean
-  hasNJP?: boolean
-  hasAssembly?: boolean
-  status?: string
-}): BatchStatus {
-  if (flags.hasAssembly || flags.status === 'finalized') return 'finalized'
-  if (flags.hasNJP || flags.status === 'assemblyPending') return 'assemblyPending'
-  if (flags.hasMixing || flags.status === 'ngpPending') return 'ngpPending'
-  return 'mixingPending'
+function rawMaterialName(rawMaterial?: RawMaterial | null): string {
+  return rawMaterial?.name || ''
 }
 
-// ============================================================================
-// Brand Grid Component
-// ============================================================================
+function rawMaterialCode(rawMaterial?: RawMaterial | null): string {
+  return rawMaterial?.code || rawMaterial?.rawMaterialCode || ''
+}
 
-function BrandGrid({
-  brands,
-  selectedId,
-  onSelect
+function productFormulaRows(
+  product?: Product | null,
+  rawMaterialsMap: Record<string, RawMaterial> = {}
+): LocalMixingRow[] {
+  return (product?.rm || []).map(row => {
+    const rawMaterial = row.rawMaterialId ? rawMaterialsMap[row.rawMaterialId] : undefined
+    const doseMg =
+      optionalNumber(row.doseMg) ??
+      optionalNumber(row.labelClaimMgPerUnit) ??
+      parseLabelClaimToMg(row.labelClaim || '')
+
+    return normalizeCategoryFields({
+      rawMaterialId: row.rawMaterialId || rawMaterial?.id || '',
+      rawMaterialCode: row.rawMaterialCode || rawMaterialCode(rawMaterial),
+      rawMaterialName: row.rawMaterial || row.rawMaterialName || rawMaterialName(rawMaterial) || row.rawMaterialCode || '',
+      rmCategoryId: getCategoryId(row) || getCategoryId(rawMaterial),
+      rmCategoryCode: getCategoryCode(row) || getCategoryCode(rawMaterial),
+      rmCategoryName: getCategoryName(row) || getCategoryName(rawMaterial),
+      labelClaimMgPerUnit: doseMg ?? '',
+      doseMg: doseMg ?? '',
+      usedQtyKg: '',
+      remarks: ''
+    })
+  })
+}
+
+function materialIdentity(row: LocalMixingRow): string {
+  return String(row.rawMaterialId || row.rawMaterialCode || row.rawMaterialName || '')
+    .trim()
+    .toLowerCase()
+}
+
+function materialDose(row: LocalMixingRow): string {
+  const dose = optionalNumber(row.doseMg ?? row.labelClaimMgPerUnit)
+  return dose === null ? '' : String(dose)
+}
+
+function isModifiedFromFormula(rows: LocalMixingRow[], product?: Product | null, rawMaterialsMap: Record<string, RawMaterial> = {}): boolean {
+  if (!product) return false
+  const formula = productFormulaRows(product, rawMaterialsMap)
+    .map(row => `${materialIdentity(row)}:${materialDose(row)}`)
+    .filter(Boolean)
+  const current = rows
+    .map(row => `${materialIdentity(row)}:${materialDose(row)}`)
+    .filter(value => value !== ':')
+
+  if (formula.length !== current.length) return true
+  return formula.some((value, index) => value !== current[index])
+}
+
+function nextMixingCode(records: LocalMixingRecord[], currentId?: string): string {
+  let highest = 0
+  records.forEach(record => {
+    if (currentId && record.id === currentId) return
+    const code = String(record.mixingCode || '')
+    if (code.startsWith('MIX-') && /^\d+$/.test(code.slice(4))) {
+      highest = Math.max(highest, Number(code.slice(4)))
+    }
+  })
+  return `MIX-${String(highest + 1).padStart(4, '0')}`
+}
+
+function buildRawMaterialsMap(rawMaterials: RawMaterial[]): Record<string, RawMaterial> {
+  const map: Record<string, RawMaterial> = {}
+  rawMaterials.forEach(rawMaterial => {
+    map[rawMaterial.id] = rawMaterial
+  })
+  return map
+}
+
+function buildCategoryOptions(rawMaterials: RawMaterial[]): RmCategoryOption[] {
+  const map = new Map<string, RmCategoryOption>()
+
+  rawMaterials.forEach(rawMaterial => {
+    const isNMI = rowIsNMI(rawMaterial)
+    const id = isNMI ? NMI_CATEGORY : getCategoryId(rawMaterial)
+    const code = isNMI ? NMI_CATEGORY : getCategoryCode(rawMaterial)
+    const name = isNMI ? NMI_CATEGORY : getCategoryName(rawMaterial)
+    const key = id || code || name
+
+    if (!key) return
+
+    map.set(key, {
+      id: id || key,
+      code: code || key,
+      name: name || code || key,
+      isNMI
+    })
+  })
+
+  map.set(NMI_CATEGORY, {
+    id: NMI_CATEGORY,
+    code: NMI_CATEGORY,
+    name: NMI_CATEGORY,
+    isNMI: true
+  })
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.isNMI && !b.isNMI) return 1
+    if (!a.isNMI && b.isNMI) return -1
+    return a.name.localeCompare(b.name)
+  })
+}
+
+function materialMatchesCategory(rawMaterial: RawMaterial, categoryKey: string, forceNMI = false): boolean {
+  if (!categoryKey) return !forceNMI || rowIsNMI(rawMaterial)
+  if (forceNMI) return rowIsNMI(rawMaterial)
+  return [
+    getCategoryId(rawMaterial),
+    getCategoryCode(rawMaterial),
+    getCategoryName(rawMaterial)
+  ].some(value => String(value || '') === categoryKey)
+}
+
+function applyRawMaterialToRow(row: LocalMixingRow, rawMaterial?: RawMaterial, forceNMI = false): LocalMixingRow {
+  if (!rawMaterial) {
+    return normalizeCategoryFields(
+      {
+        ...row,
+        rawMaterialId: '',
+        rawMaterialCode: '',
+        rawMaterialName: ''
+      },
+      forceNMI
+    )
+  }
+
+  return normalizeCategoryFields(
+    {
+      ...row,
+      rawMaterialId: rawMaterial.id,
+      rawMaterialCode: rawMaterialCode(rawMaterial),
+      rawMaterialName: rawMaterialName(rawMaterial),
+      rmCategoryId: forceNMI ? NMI_CATEGORY : getCategoryId(rawMaterial),
+      rmCategoryCode: forceNMI ? NMI_CATEGORY : getCategoryCode(rawMaterial),
+      rmCategoryName: forceNMI ? NMI_CATEGORY : getCategoryName(rawMaterial),
+      categoryId: forceNMI ? NMI_CATEGORY : getCategoryId(rawMaterial),
+      categoryCode: forceNMI ? NMI_CATEGORY : getCategoryCode(rawMaterial),
+      categoryName: forceNMI ? NMI_CATEGORY : getCategoryName(rawMaterial),
+      category: forceNMI ? NMI_CATEGORY : getCategoryName(rawMaterial)
+    },
+    forceNMI
+  )
+}
+
+function formatTimingSummary(record: LocalMixingRecord): string {
+  const sessions = record.mixingSessions || []
+  if (sessions.length) {
+    const first = sessions[0]
+    const last = sessions[sessions.length - 1]
+    const prefix = `${formatShortDate(first.date || first.startDate || null)} ${first.startTime || ''}`.trim()
+    const suffix = `${formatShortDate(last.date || last.endDate || null)} ${last.endTime || ''}`.trim()
+    if (sessions.length > 1) return `${prefix} → ${suffix} (${sessions.length} days)`
+    return `${prefix || '—'} → ${last.endTime || '—'}`
+  }
+
+  const start = `${formatShortDate(record.startDate || record.mixingDate || null)} ${record.startTime || ''}`.trim()
+  const end = `${formatShortDate(record.endDate || null)} ${record.endTime || ''}`.trim()
+  return `${start || '—'} → ${end || '—'}`
+}
+
+function LocalTimingRowsEditor({
+  rows,
+  onChange
 }: {
-  brands: Brand[]
-  selectedId?: string
-  onSelect: (brand: Brand) => void
+  rows: LocalMixingSessionForm[]
+  onChange: (rows: LocalMixingSessionForm[]) => void
 }) {
-  const colors = [
-    { bg: 'bg-cyan-50', hover: 'hover:bg-cyan-100', border: 'border-cyan-200', text: 'text-cyan-700' },
-    { bg: 'bg-purple-50', hover: 'hover:bg-purple-100', border: 'border-purple-200', text: 'text-purple-700' },
-    { bg: 'bg-orange-50', hover: 'hover:bg-orange-100', border: 'border-orange-200', text: 'text-orange-700' },
-    { bg: 'bg-green-50', hover: 'hover:bg-green-100', border: 'border-green-200', text: 'text-green-700' },
-    { bg: 'bg-blue-50', hover: 'hover:bg-blue-100', border: 'border-blue-200', text: 'text-blue-700' },
-    { bg: 'bg-rose-50', hover: 'hover:bg-rose-100', border: 'border-rose-200', text: 'text-rose-700' }
-  ]
+  const updateRow = (index: number, field: keyof LocalMixingSessionForm, value: string) => {
+    const next = [...rows]
+    next[index] = { ...next[index], [field]: value }
+    onChange(next)
+  }
+
+  const addRow = () => onChange([...rows, emptySessionRow()])
+
+  const removeRow = (index: number) => {
+    const next = rows.filter((_, rowIndex) => rowIndex !== index)
+    onChange(next.length ? next : [emptySessionRow()])
+  }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {brands.map((brand, idx) => {
-        const color = colors[idx % colors.length]
-        const isSelected = selectedId === brand.id
-        return (
-          <button
-            key={brand.id}
-            onClick={() => onSelect(brand)}
-            className={`
-              p-5 rounded-xl border-2 text-left transition-all
-              ${color.bg} ${color.hover} ${color.border}
-              ${isSelected ? 'ring-2 ring-offset-2 ring-[#1D838D]' : ''}
-            `}
-          >
-            <p className={`font-semibold text-lg ${color.text}`}>
-              {brand.name} ({brand.codePrefix})
-            </p>
-            <p className="text-sm text-zinc-600 mt-1">
-              Open mixing reports for this brand
-            </p>
-          </button>
-        )
-      })}
+    <div className="space-y-3 border border-zinc-200 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold">Mixing Daily Time Log</h3>
+          <p className="text-xs text-zinc-500">
+            Use one row per day. This keeps start and end time attached to the correct date.
+          </p>
+        </div>
+        <Button type="button" variant="subtle" size="sm" onClick={addRow}>
+          Add Day
+        </Button>
+      </div>
+
+      <div className="space-y-3">
+        {rows.map((row, index) => (
+          <div key={index} className="grid gap-3 rounded-lg border border-zinc-100 p-3 md:grid-cols-[11rem_10rem_10rem_1fr_auto]">
+            <div>
+              <Label>Date</Label>
+              <Input
+                type="date"
+                value={row.date}
+                onChange={event => updateRow(index, 'date', event.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Start Time</Label>
+              <Input
+                type="time"
+                value={row.startTime}
+                onChange={event => updateRow(index, 'startTime', event.target.value)}
+              />
+            </div>
+            <div>
+              <Label>End Time</Label>
+              <Input
+                type="time"
+                value={row.endTime}
+                onChange={event => updateRow(index, 'endTime', event.target.value)}
+              />
+              <p className="mt-1 text-[11px] text-zinc-500">Can stay blank until the day is complete.</p>
+            </div>
+            <div>
+              <Label>Day Remarks</Label>
+              <Input
+                value={row.remarks}
+                onChange={event => updateRow(index, 'remarks', event.target.value)}
+                placeholder="Example: Day 1 mixing completed"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={() => removeRow(index)}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-// ============================================================================
-// Batch Table Component
-// ============================================================================
-
-function BatchTable({
-  batches,
-  statusMap,
-  onSelect
+function LocalMaterialRowsEditor({
+  title = 'Raw Materials',
+  rows,
+  modified,
+  forceNMI = false,
+  rawMaterials,
+  categoryOptions,
+  onChange
 }: {
-  batches: Batch[]
-  statusMap: Record<string, BatchStatusInfo>
-  onSelect: (batch: Batch, status: BatchStatusInfo) => void
+  title?: string
+  rows: LocalMixingRow[]
+  modified: boolean
+  forceNMI?: boolean
+  rawMaterials: RawMaterial[]
+  categoryOptions: RmCategoryOption[]
+  onChange: (rows: LocalMixingRow[]) => void
 }) {
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Batch Code</TableHead>
-          <TableHead>Product</TableHead>
-          <TableHead>Total Bottles</TableHead>
-          <TableHead>Units/Bottle</TableHead>
-          <TableHead>Mixing</TableHead>
-          <TableHead>NJP</TableHead>
-          <TableHead>Assembly</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {batches.length === 0 ? (
-          <TableEmpty colSpan={7} message="No batches for this brand." />
-        ) : (
-          batches.map(batch => {
-            const st = statusMap[batch.id] || {} as BatchStatusInfo
-            const status = st.status || deriveStatusFromFlags(batch)
-            const disabled = status !== 'mixingPending' && !st.mixing
+  const updateRow = (index: number, field: keyof LocalMixingRow, value: string | boolean) => {
+    const next = [...rows]
+    next[index] = normalizeCategoryFields(
+      { ...next[index], [field]: value } as LocalMixingRow,
+      forceNMI
+    )
+    onChange(next)
+  }
 
-            return (
-              <TableRow
-                key={batch.id}
-                className={disabled ? 'opacity-60' : 'cursor-pointer hover:bg-zinc-50'}
-                onClick={() => !disabled && onSelect(batch, st)}
-              >
-                <TableCell className="font-semibold">{batch.batchCode}</TableCell>
-                <TableCell>{batch.productName}</TableCell>
-                <TableCell>{batch.containerCount ?? '—'}</TableCell>
-                <TableCell>{batch.unitsPerContainer ?? '—'}</TableCell>
-                <TableCell>
-                  {st.hasMixing ? (
-                    <Badge variant="success">Mixing done</Badge>
-                  ) : (
-                    <Badge variant="warning">Mixing pending</Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {st.hasMixing ? (
-                    st.hasNJP ? (
-                      <Badge variant="success">NJP done</Badge>
-                    ) : (
-                      <Badge variant="warning">Send to NJP</Badge>
-                    )
-                  ) : (
-                    <Badge variant="error">Complete mixing first</Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {!st.hasNJP ? (
-                    <Badge variant="warning">Do NJP before assembly</Badge>
-                  ) : st.hasAssembly ? (
-                    <Badge variant="success">Assembly done</Badge>
-                  ) : (
-                    <Badge variant="warning">Assembly pending</Badge>
-                  )}
-                </TableCell>
-              </TableRow>
-            )
-          })
-        )}
-      </TableBody>
-    </Table>
+  const updateCategory = (index: number, categoryKey: string) => {
+    const category = categoryOptions.find(option => option.id === categoryKey || option.code === categoryKey || option.name === categoryKey)
+    const isNMI = forceNMI || category?.isNMI || isNmiText(categoryKey)
+    const next = [...rows]
+    next[index] = normalizeCategoryFields(
+      {
+        ...next[index],
+        rawMaterialId: '',
+        rawMaterialCode: '',
+        rawMaterialName: '',
+        rmCategoryId: isNMI ? NMI_CATEGORY : category?.id || categoryKey,
+        rmCategoryCode: isNMI ? NMI_CATEGORY : category?.code || categoryKey,
+        rmCategoryName: isNMI ? NMI_CATEGORY : category?.name || categoryKey,
+        categoryId: isNMI ? NMI_CATEGORY : category?.id || categoryKey,
+        categoryCode: isNMI ? NMI_CATEGORY : category?.code || categoryKey,
+        categoryName: isNMI ? NMI_CATEGORY : category?.name || categoryKey,
+        category: isNMI ? NMI_CATEGORY : category?.name || categoryKey
+      },
+      isNMI
+    )
+    onChange(next)
+  }
+
+  const updateMaterial = (index: number, rawMaterialId: string) => {
+    const rawMaterial = rawMaterials.find(item => item.id === rawMaterialId)
+    const next = [...rows]
+    next[index] = applyRawMaterialToRow(next[index], rawMaterial, forceNMI)
+    onChange(next)
+  }
+
+  const addRow = () => onChange([...rows, emptyMaterialRow(forceNMI)])
+
+  const removeRow = (index: number) => {
+    const next = rows.filter((_, rowIndex) => rowIndex !== index)
+    onChange(next.length ? next : [emptyMaterialRow(forceNMI)])
+  }
+
+  return (
+    <div className="space-y-3 border border-zinc-200 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-base font-semibold">{title}</h3>
+            {modified && (
+              <span className="relative inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">
+                Modified
+                <button
+                  type="button"
+                  className="group relative flex h-5 w-5 cursor-help items-center justify-center rounded-full border border-amber-500 text-[11px]"
+                  aria-label="Modified formulation note"
+                >
+                  i
+                  <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-80 -translate-x-1/2 rounded-md border border-zinc-200 bg-white p-3 text-left text-xs font-medium text-zinc-700 shadow-lg group-hover:block group-focus:block group-active:block">
+                    {EDIT_DISCLAIMER}
+                  </span>
+                </button>
+              </span>
+            )}
+          </div>
+          {forceNMI && (
+            <p className="text-xs text-zinc-500">
+              NMI options are loaded automatically from Raw Materials category MMA. No category selection is needed here.
+            </p>
+          )}
+        </div>
+        <Button type="button" variant="subtle" size="sm" onClick={addRow}>
+          {forceNMI ? 'Add NMI' : 'Add Medicinal Ingredient'}
+        </Button>
+      </div>
+
+      <div className="space-y-3">
+        {rows.map((row, index) => {
+          const selectedCategoryKey = forceNMI ? NMI_CATEGORY : categoryKeyFromRow(row)
+          const filteredRawMaterials = rawMaterials.filter(rawMaterial =>
+            materialMatchesCategory(rawMaterial, selectedCategoryKey, forceNMI)
+          )
+          return (
+            <div key={index} className="space-y-3 rounded-lg border border-zinc-100 p-3">
+              <div className={forceNMI ? 'grid gap-3 lg:grid-cols-[1fr_10rem_10rem_auto]' : 'grid gap-3 lg:grid-cols-[12rem_1fr_10rem_10rem_auto]'}>
+                {!forceNMI && (
+                  <div>
+                    <Label>Raw Material Category</Label>
+                    <Select
+                      value={selectedCategoryKey}
+                      onChange={event => updateCategory(index, event.target.value)}
+                    >
+                      <option value="">Select Category</option>
+                      {categoryOptions
+                        .filter(option => !option.isNMI)
+                        .map(option => (
+                          <option key={`${option.id}-${option.code}-${option.name}`} value={option.id || option.code || option.name}>
+                            {option.name}
+                          </option>
+                        ))}
+                    </Select>
+                  </div>
+                )}
+
+                <div>
+                  <Label>{forceNMI ? 'Select NMI' : 'Raw Material Name'}</Label>
+                  <Select
+                    value={row.rawMaterialId || ''}
+                    onChange={event => updateMaterial(index, event.target.value)}
+                  >
+                    <option value="">{forceNMI ? 'Select NMI' : 'Select Raw Material'}</option>
+                    {filteredRawMaterials.map(rawMaterial => (
+                      <option key={rawMaterial.id} value={rawMaterial.id}>
+                        {rawMaterialCode(rawMaterial) ? `${rawMaterialCode(rawMaterial)} — ` : ''}{rawMaterialName(rawMaterial)}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>{forceNMI ? 'Dosage mg' : 'MG Dose Used'}</Label>
+                  <NumberInput
+                    min="0"
+                    value={String(row.doseMg ?? '')}
+                    onChange={event => updateRow(index, 'doseMg', event.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <Label>KG Used</Label>
+                  <NumberInput
+                    min="0"
+                    value={row.usedQtyKg}
+                    onChange={event => updateRow(index, 'usedQtyKg', event.target.value)}
+                  />
+                </div>
+
+                <div className="flex items-end">
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    onClick={() => removeRow(index)}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-3">
+                <div>
+                  <Label>Remarks</Label>
+                  <Input
+                    value={row.remarks || ''}
+                    onChange={event => updateRow(index, 'remarks', event.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
-// ============================================================================
-// Mixing Form Modal
-// ============================================================================
-
-function MixingFormModal({
-  batch,
-  product,
-  rawMaterialsMap,
-  njp,
-  assembly,
-  mixingReport,
+function LocalMixingFormModal({
+  record,
+  brands,
+  products,
+  rawMaterials,
+  brandProductLinks,
+  records,
   onClose,
-  onSaved
+  onSave,
+  onDelete
 }: {
-  batch: Batch
-  product: Product | null
-  rawMaterialsMap: Record<string, RawMaterial>
-  njp?: NjpReport | null
-  assembly?: AssemblyReport | null
-  mixingReport?: MixingReport | null
+  record?: LocalMixingRecord | null
+  brands: Brand[]
+  products: Product[]
+  rawMaterials: RawMaterial[]
+  brandProductLinks: { brandId: string; productId: string }[]
+  records: LocalMixingRecord[]
   onClose: () => void
-  onSaved: (options?: { timingOnly?: boolean }) => void
+  onSave: (form: LocalMixingFormState) => Promise<void>
+  onDelete: (record: LocalMixingRecord) => Promise<void>
 }) {
-  const { showToast } = useToast()
-  const locked = Boolean(mixingReport?.id && !isStageInProgress('mixing', mixingReport))
-
-  const [startDate, setStartDate] = useState(
-    toDateInput(mixingReport?.startDate ?? mixingReport?.mixingDate) || ''
-  )
-  const [endDate, setEndDate] = useState(
-    toDateInput(mixingReport?.endDate ?? mixingReport?.mixingDate) || ''
-  )
-  const [startTime, setStartTime] = useState(mixingReport?.startTime || '')
-  const [endTime, setEndTime] = useState(mixingReport?.endTime || '')
-  const [mixedPowderName, setMixedPowderName] = useState(mixingReport?.mixedPowderName || '')
-  const [mixedPowderQtyKg, setMixedPowderQtyKg] = useState<string>(
-    mixingReport?.mixedPowderQtyKg?.toString() ?? ''
-  )
-  const [nonMedUsage, setNonMedUsage] = useState<NonMedItem[]>(
-    (mixingReport?.nonMedUsage as NonMedItem[]) || []
-  )
+  const rawMaterialsMap = useMemo(() => buildRawMaterialsMap(rawMaterials), [rawMaterials])
+  const categoryOptions = useMemo(() => buildCategoryOptions(rawMaterials), [rawMaterials])
+  const [form, setForm] = useState<LocalMixingFormState>(() => formFromLocalRecord(record))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [shortageModal, setShortageModal] = useState<{
-    code: string
-    name: string
-    required: number
-    available: number
-    shortBy: number
-  }[] | null>(null)
 
-  // Calculate RM usage from formula
-  const rmUsageFormula = useMemo(() => {
-    const totalUnits = Number(batch.totalUnits) ||
-      ((Number(batch.unitsPerContainer) || 0) * (Number(batch.containerCount) || 0))
+  const totalKg = useMemo(() => calculateLocalTotal(form), [form])
 
-    if (!product || !Array.isArray(product.rm)) return []
-
-    return product.rm.map((r, idx) => {
-      let rmId = r.rawMaterialId || null
-      let rmDoc = rmId ? rawMaterialsMap[rmId] : null
-
-      if (!rmDoc) {
-        const codeLower = (r.rawMaterialCode || '').toLowerCase()
-        const nameLower = (r.rawMaterial || '').toLowerCase()
-        rmDoc = Object.values(rawMaterialsMap).find(rm =>
-          (codeLower && (rm.code || '').toLowerCase() === codeLower) ||
-          (nameLower && (rm.name || '').toLowerCase() === nameLower)
-        ) || null
-        if (rmDoc) rmId = rmDoc.id
-      }
-
-      const mgPerUnit = parseLabelClaimToMg(r.labelClaim || '') ||
-        (typeof r.labelClaimMgPerUnit === 'number' ? r.labelClaimMgPerUnit : null)
-      const requiredKg = mgPerUnit ? (totalUnits * mgPerUnit) / 1_000_000 : 0
-      const currentQtyKg = rmDoc ? Number(rmDoc.qty || rmDoc.qtyKg) || 0 : 0
-      const wasDeductedAtBatch = batch.inventoryDeductionSource === 'batch'
-      const before = wasDeductedAtBatch
-        ? +(currentQtyKg + requiredKg).toFixed(4)
-        : currentQtyKg
-
-      return {
-        clNo: idx + 1,
-        rawMaterialId: rmId || '',
-        rawMaterialCode: r.rawMaterialCode || rmDoc?.code || '',
-        rawMaterialName: r.rawMaterial || rmDoc?.name || '',
-        requiredQtyKgFormula: +(requiredKg || 0).toFixed(4),
-        requiredQtyKgThisMix: +requiredKg.toFixed(4),
-        qtyBeforeKg: before,
-        qtyAfterKg: wasDeductedAtBatch
-          ? +currentQtyKg.toFixed(4)
-          : +(before - (requiredKg || 0)).toFixed(4)
-      }
-    }).filter(u => u.rawMaterialId)
-  }, [batch, product, rawMaterialsMap])
-
-  // Calculate total formula qty
-  const totalFormulaQtyKg = useMemo(() => {
-    const rmSum = rmUsageFormula.reduce((s, u) => s + (u.requiredQtyKgFormula || 0), 0)
-    const nonSum = nonMedUsage.reduce((s, u) => s + (Number(u.requiredQtyKgFormula) || 0), 0)
-    return +(rmSum + nonSum).toFixed(4)
-  }, [rmUsageFormula, nonMedUsage])
-
-  // Calculate mixing plan with scaling
-  const mixingPlan = useMemo(() => {
-    const T = totalFormulaQtyKg || 0
-    const E = mixedPowderQtyKg ? Number(mixedPowderQtyKg) : 0
-    const errors: string[] = []
-
-    if (E < 0) errors.push('Existing mixed powder cannot be negative.')
-    if (E > T) errors.push(`Existing mixed powder (${E.toFixed(3)} kg) cannot exceed total required (${T.toFixed(3)} kg).`)
-
-    const N = Math.max(0, T - E)
-    const scale = T > 0 ? (N / T) : 0
-
-    // Scale RM usage
-    const scaledRm = rmUsageFormula.map(u => {
-      const formula = Number(u.requiredQtyKgFormula) || 0
-      const before = Number(u.qtyBeforeKg) || 0
-      const reqThis = +(formula * scale).toFixed(4)
-      const after = +(before - reqThis).toFixed(4)
-      return { ...u, requiredQtyKgThisMix: reqThis, qtyAfterKg: after, qtyBeforeKg: before }
-    })
-
-    // Scale non-med usage
-    const scaledNon = nonMedUsage.map(n => {
-      const formula = Number(n.requiredQtyKgFormula) || 0
-      const before = Number(n.qtyBeforeKg) || 0
-      const reqThis = +(formula * scale).toFixed(4)
-      const after = +(before - reqThis).toFixed(4)
-      return { ...n, requiredQtyKgThisMix: reqThis, qtyAfterKg: after, qtyBeforeKg: before }
-    })
-
-    return { T, E, N, scale, errors, scaledRm, scaledNon }
-  }, [totalFormulaQtyKg, mixedPowderQtyKg, rmUsageFormula, nonMedUsage])
-
-  const { scaledRm, scaledNon } = mixingPlan
-  const planErrors = mixingPlan.errors || []
-  const shortages = useMemo(() => scaledRm.filter(u => (u.qtyAfterKg ?? 0) < 0), [scaledRm])
-
-  const addNonMed = () => {
-    setNonMedUsage(prev => [
-      ...prev,
-      {
-        clNo: prev.length + 1,
-        name: '',
-        requiredQtyKgFormula: 0,
-        requiredQtyKgThisMix: 0,
-        qtyBeforeKg: 0,
-        qtyAfterKg: 0
-      }
-    ])
-  }
-
-  const updateNonMed = (idx: number, field: string, value: string | number) => {
-    setNonMedUsage(prev => {
-      const next = [...prev]
-      next[idx] = {
-        ...next[idx],
-        [field]: field.includes('Qty') ? (parseFloat(String(value)) || 0) : value
-      }
-      return next
-    })
-  }
-
-  const removeNonMed = (idx: number) => {
-    setNonMedUsage(prev =>
-      prev.filter((_, i) => i !== idx).map((n, i) => ({ ...n, clNo: i + 1 }))
+  const availableProducts = useMemo(() => {
+    if (!form.brandId) return []
+    const linkedProductIds = new Set(
+      brandProductLinks
+        .filter(link => link.brandId === form.brandId)
+        .map(link => link.productId)
     )
+    return linkedProductIds.size
+      ? products.filter(product => linkedProductIds.has(product.id))
+      : products
+  }, [brandProductLinks, form.brandId, products])
+
+  const selectedProduct = useMemo(
+    () => products.find(item => item.id === form.productId) || null,
+    [form.productId, products]
+  )
+
+  const generatedCode = useMemo(
+    () => (form.productId ? nextMixingCode(records, form.id) : ''),
+    [form.id, form.productId, records]
+  )
+
+  const displayMixingCode = form.autoGenerateCode ? generatedCode : form.mixingCode
+
+  const materialsModified = useMemo(
+    () => isModifiedFromFormula(form.medicinalIngredients, selectedProduct, rawMaterialsMap),
+    [form.medicinalIngredients, rawMaterialsMap, selectedProduct]
+  )
+
+  useEffect(() => {
+    setForm(formFromLocalRecord(record))
+    setError('')
+  }, [record])
+
+  const updateField = (field: keyof LocalMixingFormState, value: string | boolean) => {
+    setForm(prev => ({
+      ...prev,
+      [field]: value,
+      ...(field === 'mixedPowderName' && typeof value === 'string' && !value.trim()
+        ? { existingMixedPowderUsedKg: '' }
+        : {})
+    }))
   }
 
-  const finalizeMixing = async () => {
+  const handleBrandChange = (brandId: string) => {
+    const brand = brands.find(item => item.id === brandId)
+    setForm(prev => ({
+      ...prev,
+      brandId,
+      brandName: brand?.name || '',
+      productId: '',
+      productName: '',
+      medicinalIngredients: [emptyMaterialRow()]
+    }))
+  }
+
+  const handleProductChange = (productId: string) => {
+    const product = products.find(item => item.id === productId)
+    const formulaRows = productFormulaRows(product, rawMaterialsMap)
+    setForm(prev => ({
+      ...prev,
+      productId,
+      productName: product?.name || '',
+      medicinalIngredients: formulaRows.length ? formulaRows : [emptyMaterialRow()]
+    }))
+  }
+
+  const validateBeforeSave = (): string => {
+    const mixedPowderName = form.mixedPowderName.trim()
+    const sessions = normalizeSessionRows(form.mixingSessions)
+    const hasAnyTiming = sessions.some(row => row.date || row.startTime || row.endTime)
+
+    if (!form.brandId) return 'Brand is required.'
+    if (!form.productId) return 'Product is required.'
+    if (!form.autoGenerateCode && !form.mixingCode.trim()) return 'Mixing code is required.'
+    if (mixedPowderName && !form.existingMixedPowderUsedKg) return 'Existing mixed powder used kg is required.'
+    if (!hasAnyTiming) return 'Add at least one mixing date with start time.'
+
+    for (const [index, session] of sessions.entries()) {
+      const hasAnyValue = session.date || session.startTime || session.endTime || session.remarks
+      if (!hasAnyValue) continue
+      if (!session.date) return `Date is required in day ${index + 1}.`
+      if (!session.startTime) return `Start time is required in day ${index + 1}.`
+    }
+
+    const materialSelectionError = validateDropdownMaterialRows(form.medicinalIngredients)
+    if (materialSelectionError) return materialSelectionError
+
+    const nmiSelectionError = validateDropdownMaterialRows(form.nonMedicinalIngredients, {
+      forceNMI: true
+    })
+    if (nmiSelectionError) return nmiSelectionError
+
+    const hasMaterial = normalizeLocalRows(form.medicinalIngredients).length > 0
+    const hasNMI = normalizeLocalRows(form.nonMedicinalIngredients, true).length > 0
+
+    if (!hasMaterial && !hasNMI && !mixedPowderName) {
+      return 'Add at least one medicinal ingredient, NMI, or existing mixed powder.'
+    }
+
+    if (materialsModified && !form.changeReason.trim()) {
+      return 'Change reason is required because raw materials or dose were modified.'
+    }
+
+    return ''
+  }
+
+  const handleSave = async () => {
+    const validationError = validateBeforeSave()
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+
+    setSaving(true)
+    setError('')
     try {
-      setSaving(true)
-      setError('')
-
-      if (shortages.length) {
-        setShortageModal(shortages.map(s => ({
-          code: s.rawMaterialCode,
-          name: s.rawMaterialName,
-          required: s.requiredQtyKgThisMix,
-          available: s.qtyBeforeKg ?? 0,
-          shortBy: s.requiredQtyKgThisMix - (s.qtyBeforeKg ?? 0)
-        })))
-        return
-      }
-
-      const startDateMs = dateInputToMs(startDate)
-      const endDateMs = dateInputToMs(endDate)
-      const reportData = {
-        id: mixingReport?.id,
-        batchId: batch.id,
-        batchCode: batch.batchCode,
-        brandId: batch.brandId,
-        brandName: batch.brandName,
-        productId: batch.productId,
-        productName: batch.productName,
-        mixingDate: endDateMs ?? startDateMs,
-        startDate: startDateMs,
-        startTime: startTime || null,
-        endDate: endDateMs,
-        endTime: endTime || null,
-        status: mixingReport?.status || undefined,
-        mixedPowderName: mixedPowderName || null,
-        mixedPowderQtyKg: mixedPowderQtyKg ? Number(mixedPowderQtyKg) : null,
-        totalFormulaQtyKg,
-        totalMixedQtyKg: mixingPlan.N,
-        existingMixedPowderUsedKg: mixingPlan.E,
-        rmUsage: scaledRm.map(u => ({
-          clNo: u.clNo,
-          rawMaterialId: u.rawMaterialId,
-          rawMaterialCode: u.rawMaterialCode,
-          rawMaterialName: u.rawMaterialName,
-          requiredQtyKgFormula: u.requiredQtyKgFormula,
-          requiredQtyKgThisMix: u.requiredQtyKgThisMix,
-          qtyBeforeKg: u.qtyBeforeKg,
-          qtyAfterKg: u.qtyAfterKg
-        })),
-        nonMedUsage: scaledNon.map(n => ({
-          ...n,
-          qtyBeforeKg: n.qtyBeforeKg ?? n.requiredQtyKgThisMix,
-          qtyAfterKg: (n.qtyBeforeKg ?? n.requiredQtyKgThisMix) - n.requiredQtyKgThisMix
-        }))
-      }
-
-      await saveMixingReportWithDeduction(reportData)
-      showToast({ message: 'Mixing complete and inventory updated', type: 'success' })
-      onSaved()
-    } catch (err: unknown) {
-      console.error('Mixing transaction failed:', err)
-      const error = err as { shortage?: { rawMaterialCode: string; rawMaterialName: string; requiredQtyKgThisMix?: number; currentQty?: number; qtyBeforeKg?: number; shortBy?: number }[]; message?: string }
-      if (error.shortage) {
-        setShortageModal(error.shortage.map(s => ({
-          code: s.rawMaterialCode,
-          name: s.rawMaterialName,
-          required: Number(s.requiredQtyKgThisMix) || 0,
-          available: s.currentQty ?? s.qtyBeforeKg ?? 0,
-          shortBy: s.shortBy ?? ((Number(s.requiredQtyKgThisMix) || 0) - (s.currentQty ?? 0))
-        })))
-      } else {
-        setError(`Failed to save mixing report: ${error?.message || err}`)
-      }
+      await onSave(form)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save mixing.')
     } finally {
       setSaving(false)
     }
   }
 
-  const saveTimingOnly = async () => {
+  const handleDelete = async () => {
+    if (!record?.id) return
+    if (!window.confirm('Delete this mixing record?')) return
+    setSaving(true)
+    setError('')
     try {
-      setSaving(true)
-      setError('')
-
-      await updateBatchStageLifecycle(batch.id, 'mixing', {
-        startDate: dateInputToMs(startDate),
-        startTime: startTime || null,
-        endDate: dateInputToMs(endDate),
-        endTime: endTime || null,
-        status: mixingReport?.status,
-        remarks: mixingReport?.remarks ?? null,
-        reason: mixingReport?.reason ?? null
-      })
-
-      showToast({ message: 'Mixing timing updated', type: 'success' })
-      onSaved({ timingOnly: true })
-    } catch (err: unknown) {
-      console.error('Mixing timing update failed:', err)
-      const message = err instanceof Error ? err.message : 'Failed to update mixing timing.'
-      setError(message)
+      await onDelete(record)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete mixing.')
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <>
-      <Modal
-        open={true}
-        onClose={onClose}
-        title={`Mixing Report – ${batch.batchCode} ${batch.productName}`}
-        className="max-w-5xl"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-zinc-600">Brand: {batch.brandName}</p>
+    <Modal
+      open={true}
+      onClose={onClose}
+      title={record?.id ? 'Edit Mixing' : 'Create Mixing'}
+      className="max-w-7xl"
+      closeOnBackdrop={false}
+    >
+      <div className="space-y-5">
+        {error && (
+          <div className="border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">
+            {error}
+          </div>
+        )}
 
-          {error && (
-            <div className="p-3 rounded-lg bg-rose-100 text-rose-800 border border-rose-200">
-              {error}
-            </div>
-          )}
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+          {EDIT_DISCLAIMER}
+        </div>
 
-          {/* Basic Info Grid */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <Label>Product</Label>
-              <Input value={batch.productName || ''} disabled />
-            </div>
-            <div>
-              <Label>Batch Code</Label>
-              <Input value={batch.batchCode} disabled />
-            </div>
-            <div>
-              <Label>NJP Date</Label>
-              <Input value={njp ? formatDate(njp.productionDate) : '—'} disabled />
-            </div>
-            <div>
-              <Label>Assembly Date</Label>
-              <Input value={assembly ? formatDate(assembly.productionDate) : '—'} disabled />
-            </div>
-            <div>
-              <Label>Mixing Start Date</Label>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <Label>Brand</Label>
+            <Select value={form.brandId} onChange={event => handleBrandChange(event.target.value)}>
+              <option value="">Select Brand</option>
+              {brands.map(brand => (
+                <option key={brand.id} value={brand.id}>
+                  {brand.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <Label>Product</Label>
+            <Select
+              value={form.productId}
+              onChange={event => handleProductChange(event.target.value)}
+              disabled={!form.brandId}
+            >
+              <option value="">Select Product</option>
+              {availableProducts.map(product => (
+                <option key={product.id} value={product.id}>
+                  {product.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <Label>Mixing Code</Label>
+              <Checkbox
+                label="Auto-generate"
+                checked={form.autoGenerateCode}
+                onChange={event => updateField('autoGenerateCode', event.target.checked)}
               />
             </div>
+            <Input
+              value={displayMixingCode}
+              placeholder="Auto-generated"
+              disabled={form.autoGenerateCode}
+              onChange={event => updateField('mixingCode', event.target.value)}
+            />
+          </div>
+
+          <div>
+            <Label>Total Kg in Mixing</Label>
+            <NumberInput
+              min="0"
+              value={form.totalKgInMixing}
+              onChange={event => updateField('totalKgInMixing', event.target.value)}
+              placeholder={formatLocalKg(totalKg)}
+            />
+            <p className="mt-1 text-[11px] text-zinc-500">
+              Enter the final/manual total kg. Calculated material total: {formatLocalKg(totalKg)} kg.
+            </p>
+          </div>
+
+          <div>
+            <Label>Mixed Powder Name <span className="text-xs font-normal text-amber-700">TBD / later discussion</span></Label>
+            <Input
+              value={form.mixedPowderName}
+              onChange={event => updateField('mixedPowderName', event.target.value)}
+              placeholder="Optional existing mixed powder"
+            />
+          </div>
+
+          {form.mixedPowderName.trim() && (
             <div>
-              <Label>Mixing Start Time</Label>
-              <Input
-                type="time"
-                value={startTime}
-                onChange={e => setStartTime(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label>Mixing End Date</Label>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label>Mixing End Time</Label>
-              <Input
-                type="time"
-                value={endTime}
-                onChange={e => setEndTime(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label>Mixed Powder Name</Label>
-              <Input
-                value={mixedPowderName}
-                disabled={locked}
-                onChange={e => setMixedPowderName(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label>Existing Mixed Powder Used (kg) — optional</Label>
+              <Label>Existing Mixed Powder Used Kg</Label>
               <NumberInput
-                value={mixedPowderQtyKg}
-                disabled={locked}
-                onChange={e => setMixedPowderQtyKg(e.target.value)}
+                min="0"
+                value={form.existingMixedPowderUsedKg}
+                onChange={event => updateField('existingMixedPowderUsedKg', event.target.value)}
               />
             </div>
-            <div>
-              <Label>Total Formula Qty (kg)</Label>
-              <Input value={totalFormulaQtyKg.toString()} disabled />
-            </div>
-          </div>
-
-          {/* Plan Errors */}
-          {planErrors.length > 0 && (
-            <div className="p-3 rounded-lg bg-rose-100 text-rose-800 border border-rose-200">
-              {planErrors.map((e, i) => <div key={i}>{e}</div>)}
-            </div>
           )}
+        </div>
 
-          {/* Raw Materials Table */}
+        <LocalTimingRowsEditor
+          rows={form.mixingSessions}
+          onChange={rows => setForm(prev => ({ ...prev, mixingSessions: rows }))}
+        />
+
+        <LocalMaterialRowsEditor
+          title="Medicinal Ingredients"
+          rows={form.medicinalIngredients}
+          modified={materialsModified}
+          rawMaterials={rawMaterials}
+          categoryOptions={categoryOptions}
+          onChange={rows => setForm(prev => ({ ...prev, medicinalIngredients: rows }))}
+        />
+
+        <LocalMaterialRowsEditor
+          title="Non-Medicinal Ingredients"
+          rows={form.nonMedicinalIngredients}
+          modified={false}
+          forceNMI
+          rawMaterials={rawMaterials}
+          categoryOptions={categoryOptions}
+          onChange={rows => setForm(prev => ({ ...prev, nonMedicinalIngredients: rows }))}
+        />
+
+        <div className="grid gap-4 md:grid-cols-[1fr_1fr_14rem] md:items-end">
           <div>
-            <h3 className="text-base font-semibold mb-2">Raw Materials (auto)</h3>
-            <div className="overflow-auto max-h-64">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">CL</TableHead>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Formula Qty (kg)</TableHead>
-                    <TableHead>Available (kg)</TableHead>
-                    <TableHead>Used (kg)</TableHead>
-                    <TableHead>After (kg)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {scaledRm.length === 0 ? (
-                    <TableEmpty colSpan={7} message="No RM linked." />
-                  ) : (
-                    scaledRm.map(u => (
-                      <TableRow key={u.rawMaterialId}>
-                        <TableCell>{u.clNo}</TableCell>
-                        <TableCell className="font-semibold">{u.rawMaterialCode}</TableCell>
-                        <TableCell>{u.rawMaterialName}</TableCell>
-                        <TableCell>{u.requiredQtyKgFormula.toFixed(4)}</TableCell>
-                        <TableCell>{(u.qtyBeforeKg ?? 0).toFixed(4)}</TableCell>
-                        <TableCell>{u.requiredQtyKgThisMix.toFixed(4)}</TableCell>
-                        <TableCell className={u.qtyAfterKg < 0 ? 'text-rose-700 font-semibold' : ''}>
-                          {u.qtyAfterKg.toFixed(4)}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+            <Label>Remarks</Label>
+            <TextArea
+              value={form.remarks}
+              onChange={event => updateField('remarks', event.target.value)}
+              placeholder="General mixing remarks"
+            />
           </div>
 
-          {/* Non-medicinal Ingredients */}
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-base font-semibold">Non-medicinal Ingredients</h3>
-              {!locked && (
-                <Button variant="subtle" size="sm" onClick={addNonMed}>
-                  + Add Ingredient
-                </Button>
-              )}
-            </div>
-            <div className="overflow-auto max-h-48">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">CL</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Formula Qty (kg)</TableHead>
-                    <TableHead>Used (kg)</TableHead>
-                    <TableHead>After (kg)</TableHead>
-                    <TableHead className="w-16"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {nonMedUsage.length === 0 ? (
-                    <TableEmpty colSpan={6} message="None added yet." />
-                  ) : (
-                    scaledNon.map((n, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell>{idx + 1}</TableCell>
-                        <TableCell>
-                          <Input
-                            value={n.name}
-                            disabled={locked}
-                            onChange={e => updateNonMed(idx, 'name', e.target.value)}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <NumberInput
-                            value={nonMedUsage[idx].requiredQtyKgFormula?.toString() ?? ''}
-                            disabled={locked}
-                            onChange={e => updateNonMed(idx, 'requiredQtyKgFormula', e.target.value)}
-                          />
-                        </TableCell>
-                        <TableCell>{n.requiredQtyKgThisMix.toFixed(4)}</TableCell>
-                        <TableCell>{(n.qtyAfterKg ?? 0).toFixed(4)}</TableCell>
-                        <TableCell>
-                          {!locked && (
-                            <Button
-                              variant="danger"
-                              size="sm"
-                              onClick={() => removeNonMed(idx)}
-                            >
-                              Delete
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+            <Label>Change Reason</Label>
+            <TextArea
+              value={form.changeReason}
+              onChange={event => updateField('changeReason', event.target.value)}
+              placeholder="Required if RM is added/removed or dose is changed"
+            />
           </div>
 
-          {/* Actions */}
-          <div className="flex gap-2 justify-end pt-4 border-t border-zinc-200">
-            <Button variant="subtle" onClick={() => window.print()}>Print</Button>
-            <Button variant="ghost" onClick={onClose}>Close</Button>
-            {locked ? (
-              <Button
-                onClick={saveTimingOnly}
-                loading={saving}
-                disabled={saving}
-              >
-                {saving ? 'Saving...' : 'Save Timing'}
-              </Button>
-            ) : (
-              <Button
-                onClick={finalizeMixing}
-                loading={saving}
-                disabled={saving || scaledRm.length === 0 || planErrors.length > 0}
-              >
-                {saving ? 'Saving...' : 'Finalize Mixing & Deduct Inventory'}
+          <div className="border border-zinc-200 bg-zinc-50 p-4">
+            <div className="text-sm font-semibold text-zinc-600">Calculated Materials Kg</div>
+            <div className="mt-2 text-2xl font-bold">{formatLocalKg(totalKg)}</div>
+          </div>
+        </div>
+
+        <div className="flex flex-col-reverse gap-2 border-t border-zinc-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            {record?.id && (
+              <Button type="button" variant="danger" onClick={handleDelete} disabled={saving}>
+                Delete Mixing
               </Button>
             )}
           </div>
-        </div>
-      </Modal>
-
-      {/* Shortage Modal */}
-      {shortageModal && (
-        <Modal
-          open={true}
-          onClose={() => setShortageModal(null)}
-          title="Insufficient Stock"
-        >
-          <div className="space-y-4">
-            <p className="text-sm text-zinc-600">
-              You cannot finalize this mixing. The following raw materials are short.
-            </p>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Required (kg)</TableHead>
-                  <TableHead>Available (kg)</TableHead>
-                  <TableHead>Short by (kg)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {shortageModal.map((s, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell className="font-semibold">{s.code}</TableCell>
-                    <TableCell>{s.name}</TableCell>
-                    <TableCell>{(s.required || 0).toFixed(4)}</TableCell>
-                    <TableCell>{(s.available || 0).toFixed(4)}</TableCell>
-                    <TableCell className="text-rose-700 font-semibold">
-                      {(s.shortBy || 0).toFixed(4)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <div className="flex justify-end">
-              <Button variant="ghost" onClick={() => setShortageModal(null)}>Close</Button>
-            </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+              Close
+            </Button>
+            <Button type="button" onClick={handleSave} loading={saving}>
+              Save Mixing
+            </Button>
           </div>
-        </Modal>
-      )}
-    </>
+        </div>
+      </div>
+    </Modal>
   )
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export default function MixingReportsPage() {
   const { showToast } = useToast()
-  const searchParams = useSearchParams()
-  const requestedBrandId = searchParams.get('brandId')
-  const requestedBatchId = searchParams.get('batchId')
-  const [loading, setLoading] = useState(true)
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState('')
-
+  const [records, setRecords] = useState<LocalMixingRecord[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
-  const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null)
-  const [batches, setBatches] = useState<Batch[]>([])
-  const [statusMap, setStatusMap] = useState<Record<string, BatchStatusInfo>>({})
   const [products, setProducts] = useState<Product[]>([])
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([])
+  const [brandProductLinks, setBrandProductLinks] = useState<{ brandId: string; productId: string }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [selectedRecord, setSelectedRecord] = useState<LocalMixingRecord | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [search, setSearch] = useState('')
+  const [brandFilter, setBrandFilter] = useState('')
 
-  const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null)
-  const [selectedMeta, setSelectedMeta] = useState<BatchStatusInfo | null>(null)
-
-  const rawMaterialsMap = useMemo(() => {
-    const map: Record<string, RawMaterial> = {}
-    rawMaterials.forEach(r => { map[r.id] = r })
-    return map
-  }, [rawMaterials])
-
-  const productsMap = useMemo(() => {
-    const map: Record<string, Product> = {}
-    products.forEach(p => { map[p.id] = p })
-    return map
-  }, [products])
-
-  const mixingReportsForPrint = useMemo(
-    () =>
-      Object.values(statusMap)
-        .map((entry) => entry.mixing)
-        .filter((entry): entry is MixingReport => Boolean(entry))
-        .map((entry) => entry as unknown as Record<string, unknown>),
-    [statusMap]
-  )
-
-  const batchRowsForPrint = useMemo(
-    () => batches.map((batch) => batch as unknown as Record<string, unknown>),
-    [batches]
-  )
-
-  // Initial data load
-  useEffect(() => {
-    loadInitialData()
-  }, [])
-
-  async function loadInitialData() {
+  const loadRecords = useCallback(async () => {
     try {
       setLoading(true)
-      await initSupabase()
-      const [brandList, productList, rmList] = await Promise.all([
-        fetchBrands({ activeOnly: true }),
+      setError('')
+
+      const [mixingData, brandData, productData, rawMaterialData, labelData] = await Promise.all([
+        fetchLocalMixings(),
+        fetchBrands<Brand>({ activeOnly: true }),
         fetchProducts(),
-        fetchRawMaterials()
+        fetchRawMaterials(),
+        fetchLabelInventory({ activeOnly: true })
       ])
-      setBrands(brandList as Brand[])
-      setProducts(productList as Product[])
-      setRawMaterials(rmList as RawMaterial[])
+
+      setRecords(mixingData as LocalMixingRecord[])
+      setBrands(brandData)
+      setProducts(productData as Product[])
+      setRawMaterials(rawMaterialData as RawMaterial[])
+      setBrandProductLinks(
+        (labelData as { brandId?: string; productId?: string }[])
+          .filter(link => link.brandId && link.productId)
+          .map(link => ({
+            brandId: String(link.brandId),
+            productId: String(link.productId)
+          }))
+      )
     } catch (err) {
-      console.error('Initial load failed:', err)
-      setError('Failed to load initial data.')
+      setError(err instanceof Error ? err.message : 'Failed to load mixing records.')
     } finally {
       setLoading(false)
     }
-  }
-
-  const loadBrandData = useCallback(async (brand: Brand, focusBatchId?: string | null) => {
-    try {
-      setPending(true)
-      setError('')
-
-      const [batchesList, mixingList, njpList, assemblyList] = await Promise.all([
-        fetchBatches({ brandId: brand.id }),
-        fetchMixingReports({ brandId: brand.id }),
-        fetchNJPReports({ brandId: brand.id }),
-        fetchAssemblyReports({ brandId: brand.id })
-      ])
-
-      setBatches(batchesList as Batch[])
-
-      // Build status map
-      const map: Record<string, BatchStatusInfo> = {}
-      ;(batchesList as Batch[]).forEach(b => {
-        const mixingReport = (mixingList as MixingReport[]).find(r => r.batchId === b.id) || null
-        const njpReport = (njpList as NjpReport[]).find(r => r.batchId === b.id) || null
-        const assemblyReport = (assemblyList as AssemblyReport[]).find(r => r.batchId === b.id) || null
-        const hasMixing = isStageCompleted('mixing', b, mixingReport)
-        const hasNJP = isStageCompleted('njp', b, njpReport)
-        const hasAssembly = isStageCompleted('assembly', b, assemblyReport)
-        const derivedStatus = deriveStatusFromFlags({ hasMixing, hasNJP, hasAssembly, status: b.status })
-
-        map[b.id] = {
-          hasMixing,
-          hasNJP,
-          hasAssembly,
-          status: derivedStatus,
-          njp: njpReport,
-          assembly: assemblyReport,
-          mixing: mixingReport
-        }
-      })
-      setStatusMap(map)
-
-      if (focusBatchId) {
-        const targetBatch = (batchesList as Batch[]).find(batch => batch.id === focusBatchId)
-        const targetStatus = targetBatch ? map[targetBatch.id] : null
-
-        if (!targetBatch || !targetStatus) {
-          setError('The selected batch was not found for this brand.')
-        } else if ((targetStatus.status || targetBatch.status) !== 'mixingPending' && !targetStatus.mixing) {
-          setError('This batch is not in Mixing stage.')
-        } else {
-          setSelectedBatch(targetBatch)
-          setSelectedMeta(targetStatus)
-        }
-      }
-    } catch (err) {
-      console.error(err)
-      setError('Failed to load batches/reports for this brand.')
-    } finally {
-      setPending(false)
-    }
   }, [])
 
   useEffect(() => {
-    if (!requestedBrandId || brands.length === 0) return
+    loadRecords()
+  }, [loadRecords])
 
-    const brand = brands.find(item => item.id === requestedBrandId)
-    if (!brand) {
-      setError('The selected brand was not found.')
-      return
-    }
+  const filteredRecords = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return records.filter(record => {
+      if (brandFilter && record.brandId !== brandFilter) return false
+      if (!query) return true
 
-    setSelectedBrand(brand)
-    setSelectedBatch(null)
-    setSelectedMeta(null)
-    loadBrandData(brand, requestedBatchId)
-  }, [brands, requestedBrandId, requestedBatchId, loadBrandData])
+      const mainText = [
+        record.mixingCode,
+        record.brandName,
+        record.productName,
+        record.remarks
+      ]
+        .join(' ')
+        .toLowerCase()
 
-  const handleSelectBrand = (brand: Brand) => {
-    setSelectedBrand(brand)
-    loadBrandData(brand)
+      if (mainText.includes(query)) return true
+
+      const allRows = [
+        ...(record.medicinalIngredients || []),
+        ...(record.nonMedicinalIngredients || []),
+        ...(record.byBookRawMaterials || []),
+        ...(record.pragmaticRawMaterials || []),
+        ...(record.nonMedUsage || [])
+      ]
+
+      return allRows.some(row =>
+        [
+          row.rawMaterialCode,
+          row.rawMaterialName,
+          row.rmCategoryName,
+          row.rmCategoryCode,
+          row.category
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(query)
+      )
+    })
+  }, [brandFilter, records, search])
+
+  const openCreate = () => {
+    setSelectedRecord(null)
+    setCreating(true)
   }
 
-  const handleSelectBatch = (batch: Batch, status: BatchStatusInfo) => {
-    const st = status || statusMap[batch.id] || {} as BatchStatusInfo
-    const batchStatus = st.status || batch.status
-
-    if (batchStatus && batchStatus !== 'mixingPending' && !st.mixing) {
-      setError('This batch is not in Mixing stage.')
-      return
-    }
-
-    setSelectedBatch(batch)
-    setSelectedMeta(st)
+  const closeModal = () => {
+    setSelectedRecord(null)
+    setCreating(false)
   }
 
-  const handleMixingSaved = (options?: { timingOnly?: boolean }) => {
-    setSelectedBatch(null)
-    setSelectedMeta(null)
-    if (selectedBrand) {
-      loadBrandData(selectedBrand)
+  const handleSave = async (form: LocalMixingFormState) => {
+    const mixingSessions = sessionsToPayload(form.mixingSessions)
+    const firstSession = firstPayloadSession(mixingSessions)
+    const lastSession = lastPayloadSession(mixingSessions)
+
+    const payload = {
+      id: form.id,
+      brandId: form.brandId,
+      brandName: form.brandName.trim(),
+      productId: form.productId,
+      productName: form.productName.trim(),
+      mixingCode: form.autoGenerateCode ? '' : form.mixingCode.trim(),
+      mixingSessions,
+      mixingTimeLogs: mixingSessions,
+      timeLogs: mixingSessions,
+      mixingDates: mixingSessions.map(session => session.date).filter(Boolean),
+      mixingDate: firstSession?.date || null,
+      startDate: firstSession?.startDate || null,
+      startTime: firstSession?.startTime || null,
+      endDate: lastSession?.endDate || null,
+      endTime: lastSession?.endTime || null,
+
+      mixedPowderName: form.mixedPowderName.trim(),
+      existingMixedPowderUsedKg: form.mixedPowderName.trim()
+        ? toLocalNumber(form.existingMixedPowderUsedKg)
+        : null,
+
+      medicinalIngredients: normalizeLocalRows(form.medicinalIngredients),
+      nonMedicinalIngredients: normalizeLocalRows(form.nonMedicinalIngredients, true),
+      totalKgInMixing: form.totalKgInMixing ? toLocalNumber(form.totalKgInMixing) : calculateLocalTotal(form),
+      totalKg: form.totalKgInMixing ? toLocalNumber(form.totalKgInMixing) : calculateLocalTotal(form),
+      totalMixingKg: form.totalKgInMixing ? toLocalNumber(form.totalKgInMixing) : calculateLocalTotal(form),
+      totalMixedQtyKg: form.totalKgInMixing ? toLocalNumber(form.totalKgInMixing) : calculateLocalTotal(form),
+
+      // Legacy aliases kept during transition.
+      byBookRawMaterials: normalizeLocalRows(form.medicinalIngredients),
+      pragmaticRawMaterials: [],
+      nonMedUsage: normalizeLocalRows(form.nonMedicinalIngredients, true),
+
+      remarks: form.remarks.trim(),
+      reason: form.changeReason.trim(),
+      changeReason: form.changeReason.trim(),
+      editDisclaimer: EDIT_DISCLAIMER
     }
-    if (!options?.timingOnly) {
-      showToast({ message: 'Mixing complete. Send to NJP next.', type: 'success' })
-    }
+
+    await saveLocalMixing(payload)
+    showToast({ message: 'Mixing saved', type: 'success' })
+    closeModal()
+    await loadRecords()
   }
 
-  const handleBackToBrands = () => {
-    setSelectedBrand(null)
-    setBatches([])
-    setSelectedBatch(null)
-    setSelectedMeta(null)
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-zinc-500">Loading...</div>
-      </div>
-    )
+  const handleDelete = async (record: LocalMixingRecord) => {
+    if (!record.id) return
+    await deleteLocalMixing(record.id)
+    showToast({ message: 'Mixing deleted', type: 'success' })
+    closeModal()
+    await loadRecords()
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Mixing Reports</h1>
-          <p className="text-zinc-600">
-            Select a brand to manage mixing reports
+          <h1 className="text-2xl font-bold">Mixing</h1>
+          <p className="text-sm text-zinc-600">
+            Create, edit, and track mixing records with daily time logs and medicinal ingredients, MMA-based NMI rows, and total kg data.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {selectedBrand && (
-            <>
-              <span className="text-sm text-zinc-600">Brand:</span>
-              <span className="font-semibold">{selectedBrand.name} ({selectedBrand.codePrefix})</span>
-            </>
-          )}
-          <StagePrintButton
-            stage="mixing"
-            brandName={selectedBrand?.name}
-            reports={mixingReportsForPrint}
-            batches={batchRowsForPrint}
-            disabled={!selectedBrand || pending}
-          />
-          {selectedBrand && (
-            <Button variant="ghost" onClick={handleBackToBrands}>Back to brands</Button>
-          )}
-        </div>
+        <Button type="button" onClick={openCreate}>
+          Add Mixing
+        </Button>
       </div>
 
       {error && (
-        <div className="p-3 rounded-lg bg-rose-100 text-rose-800 border border-rose-200">
+        <div className="border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">
           {error}
-          <button onClick={() => setError('')} className="ml-2 underline">Dismiss</button>
         </div>
       )}
 
-      {/* Brand Selection */}
-      <Card title="Select a Brand">
-        <BrandGrid
-          brands={brands}
-          selectedId={selectedBrand?.id}
-          onSelect={handleSelectBrand}
-        />
+      <Card title="Filters">
+        <div className="grid gap-4 md:grid-cols-[1fr_16rem]">
+          <div>
+            <Label>Search</Label>
+            <Input
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              placeholder="Search by mixing code, product, brand, ingredient, category..."
+            />
+          </div>
+          <div>
+            <Label>Brand</Label>
+            <Select value={brandFilter} onChange={event => setBrandFilter(event.target.value)}>
+              <option value="">All Brands</option>
+              {brands.map(brand => (
+                <option key={brand.id} value={brand.id}>
+                  {brand.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
       </Card>
 
-      {/* Batch Table */}
-      {selectedBrand && (
-        <Card
-          title={`Batches for ${selectedBrand.name}`}
-          actions={pending && <span className="text-sm text-zinc-500">Loading...</span>}
-        >
-          <BatchTable
-            batches={batches}
-            statusMap={statusMap}
-            onSelect={handleSelectBatch}
-          />
-        </Card>
+      <Card
+        title="Mixing Records"
+        actions={
+          <span className="rounded-full bg-[#e0f7fa] px-3 py-1 text-sm font-semibold text-[#006F7A]">
+            {filteredRecords.length} shown
+          </span>
+        }
+      >
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Sr</TableHead>
+              <TableHead>Mixing Code</TableHead>
+              <TableHead>Brand</TableHead>
+              <TableHead>Product</TableHead>
+              <TableHead>Time</TableHead>
+              <TableHead>Total Kg</TableHead>
+              <TableHead>Revision</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableEmpty colSpan={7} message="Loading..." />
+            ) : filteredRecords.length === 0 ? (
+              <TableEmpty colSpan={7} message="No mixing records found." />
+            ) : (
+              filteredRecords.map((record, index) => (
+                <TableRow
+                  key={record.id || index}
+                  clickable
+                  onClick={() => setSelectedRecord(record)}
+                >
+                  <TableCell className="font-semibold">{index + 1}</TableCell>
+                  <TableCell className="font-semibold">{record.mixingCode || '-'}</TableCell>
+                  <TableCell>{record.brandName || '-'}</TableCell>
+                  <TableCell>{record.productName || '-'}</TableCell>
+                  <TableCell>{formatTimingSummary(record)}</TableCell>
+                  <TableCell>{formatLocalKg(record.totalKgInMixing ?? record.totalKg ?? record.totalMixingKg ?? record.totalMixedQtyKg ?? record.totalFormulaQtyKg)}</TableCell>
+                  <TableCell>{record.revisionNo || 1}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {(creating || selectedRecord) && (
+        <LocalMixingFormModal
+          record={selectedRecord}
+          brands={brands}
+          products={products}
+          rawMaterials={rawMaterials}
+          brandProductLinks={brandProductLinks}
+          records={records}
+          onClose={closeModal}
+          onSave={async form => {
+            setSaving(true)
+            try {
+              await handleSave(form)
+            } finally {
+              setSaving(false)
+            }
+          }}
+          onDelete={async record => {
+            setSaving(true)
+            try {
+              await handleDelete(record)
+            } finally {
+              setSaving(false)
+            }
+          }}
+        />
       )}
 
-      {/* Mixing Form Modal */}
-      {selectedBatch && (
-        <MixingFormModal
-          batch={selectedBatch}
-          product={productsMap[selectedBatch.productId] || null}
-          rawMaterialsMap={rawMaterialsMap}
-          njp={selectedMeta?.njp}
-          assembly={selectedMeta?.assembly}
-          mixingReport={selectedMeta?.mixing}
-          onClose={() => {
-            setSelectedBatch(null)
-            setSelectedMeta(null)
-          }}
-          onSaved={handleMixingSaved}
-        />
+      {saving && (
+        <div className="fixed bottom-4 right-4 rounded-md bg-zinc-900 px-4 py-2 text-sm font-semibold text-white shadow-lg">
+          Saving...
+        </div>
       )}
     </div>
   )

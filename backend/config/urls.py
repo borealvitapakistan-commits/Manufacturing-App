@@ -16,6 +16,8 @@ Including another URLconf
 """
 from django.urls import include, path
 
+from apps.batches.views import StandaloneMixingDetailView, StandaloneMixingListCreateView
+
 urlpatterns = [
     path("api/", include("config.api_aliases")),
     path("api/", include("apps.common.urls")),
@@ -24,6 +26,8 @@ urlpatterns = [
     path("api/raw-materials/", include("apps.raw_materials.urls")),
     path("api/products/", include("apps.products.urls")),
     path("api/labels/", include("apps.labels.urls")),
+    path("api/mixing/", StandaloneMixingListCreateView.as_view()),
+    path("api/mixing/<uuid:item_id>/", StandaloneMixingDetailView.as_view()),
     path("api/batches/", include("apps.batches.urls")),
     path("api/inventory/", include("apps.inventory.urls")),
     path("api/finished-goods/", include("apps.inventory.urls")),
