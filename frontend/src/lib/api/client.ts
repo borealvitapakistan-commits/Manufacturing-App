@@ -11,6 +11,46 @@ export class ApiError extends Error {
   }
 }
 
+function formatErrorDetails(details: unknown): string {
+  if (!details || typeof details !== 'object') return ''
+
+  if (Array.isArray(details)) {
+    return details
+      .map((item, index) => {
+        if (typeof item === 'object' && item !== null) {
+          const nested = formatErrorDetails(item)
+          return nested ? `row ${index + 1}: ${nested}` : ''
+        }
+
+        return String(item)
+      })
+      .filter(Boolean)
+      .join('; ')
+  }
+
+  return Object.entries(details as Record<string, unknown>)
+    .map(([field, value]) => {
+      const message = Array.isArray(value)
+        ? value
+            .map((item, index) => {
+              if (typeof item === 'object' && item !== null) {
+                const nested = formatErrorDetails(item)
+                return nested ? `row ${index + 1}: ${nested}` : ''
+              }
+
+              return String(item)
+            })
+            .filter(Boolean)
+            .join(', ')
+        : typeof value === 'object' && value !== null
+          ? formatErrorDetails(value)
+          : String(value)
+      return `${field}: ${message}`
+    })
+    .filter(Boolean)
+    .join('; ')
+}
+
 export async function request<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -28,7 +68,11 @@ export async function request<T>(
   const text = await response.text()
   const body = text ? JSON.parse(text) : {}
   if (!response.ok) {
-    throw new ApiError(body.error || 'Request failed', response.status, body.details)
+    const detailMessage = formatErrorDetails(body.details)
+    const message = [body.error || 'Request failed', detailMessage]
+      .filter(Boolean)
+      .join(': ')
+    throw new ApiError(message, response.status, body.details)
   }
   return body as T
 }

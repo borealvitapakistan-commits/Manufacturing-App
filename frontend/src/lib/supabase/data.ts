@@ -6,14 +6,13 @@ import type {
   CreatePurchaseOrderInput,
   FGCategory,
   FinishedGood,
-  ManufacturingStage,
   PODocument,
-  PurchaseOrderType,
-  StageLifecycleInput
+  PurchaseOrderType
 } from '@/types'
 import { api, query } from '@/lib/api/client'
 
 type Data<T> = { data: T }
+
 // The copied Next.js screens define their own view-model interfaces. Keep the
 // adapter permissive at this boundary while Django remains the source of truth.
 type AnyRecord = any
@@ -165,191 +164,157 @@ export async function deleteLabelInventory(id: string) {
   await api.delete(`/labels/${id}`)
 }
 
-export async function fetchBatches(options?: {
+export async function fetchBottleLidInventory(options?: {
+  bottleType?: string
+  capsuleType?: string
+}) {
+  return unwrap(
+    await api.get<Data<AnyRecord[]>>(
+      `/bottles-lids${query({ ...options, limit: 500 })}`
+    )
+  )
+}
+
+export async function saveBottleLidInventory(entry: AnyRecord) {
+  const { id, createdAt, updatedAt, ...payload } = entry
+  return unwrap(
+    id
+      ? await api.put<Data<AnyRecord>>(`/bottles-lids/${id}`, payload)
+      : await api.post<Data<AnyRecord>>('/bottles-lids', payload)
+  )
+}
+
+export async function deleteBottleLidInventory(id: string) {
+  await api.delete(`/bottles-lids/${id}`)
+}
+
+// ============================================================================
+// Standalone / Local Mixing
+// Django routes:
+//   GET    /api/mixing/
+//   POST   /api/mixing/
+//   GET    /api/mixing/<uuid:item_id>/
+//   PUT    /api/mixing/<uuid:item_id>/
+//   DELETE /api/mixing/<uuid:item_id>/
+// ============================================================================
+
+export async function fetchLocalMixings(options?: {
   brandId?: string
-  status?: string
+  productId?: string
+  mixingCode?: string
+  search?: string
   limit?: number
 }) {
   return unwrap(
     await api.get<Data<AnyRecord[]>>(
-      `/batches${query({ ...options, limit: options?.limit ?? 500 })}`
-    )
-  )
-}
-
-export async function fetchBatch(id: string) {
-  return unwrap(await api.get<Data<AnyRecord>>(`/batches/${id}`))
-}
-
-export async function saveBatch(batch: AnyRecord) {
-  const id = String(batch.id || '')
-  const payload = {
-    brandId: batch.brandId,
-    productId: batch.productId,
-    dosageForm: batch.dosageForm,
-    unitsPerContainer: batch.unitsPerContainer ?? null,
-    containerCount: batch.containerCount,
-    totalUnits: batch.totalUnits ?? null,
-    startTime: batch.startTime ?? null,
-    endTime: batch.endTime ?? null,
-    batchStatus: batch.batchStatus,
-    currentStage: batch.currentStage,
-    batchStartDate: batch.batchStartDate ?? null,
-    batchStartTime: batch.batchStartTime ?? null,
-    batchEndDate: batch.batchEndDate ?? null,
-    batchEndTime: batch.batchEndTime ?? null,
-    batchRemarks: batch.batchRemarks ?? null,
-    reason: batch.reason ?? null,
-    notes: batch.notes || '',
-    manualBatchCode: batch.batchCode || undefined,
-    createdBy: batch.createdBy ?? null,
-    status: batch.status,
-    hasMixing: batch.hasMixing,
-    hasNJP: batch.hasNJP,
-    hasAssembly: batch.hasAssembly
-  }
-  const result = id
-    ? unwrap(await api.put<Data<AnyRecord>>(`/batches/${id}`, payload))
-    : unwrap(await api.post<Data<AnyRecord>>('/batches', payload))
-  return result.id as string
-}
-
-export async function deleteBatch(id: string) {
-  await api.delete(`/batches/${id}`)
-}
-
-export async function deleteBatchCascade(id: string) {
-  return unwrap(await api.delete<Data<AnyRecord>>(`/batches/${id}?cascade=true`))
-}
-
-export async function generateBatchCode(brandId: string, prefix: string) {
-  const batches = await fetchBatches({ brandId, limit: 500 })
-  const sequence = batches.reduce((max, row) => {
-    const code = String(row.batchCode || '')
-    const suffix = code.startsWith(prefix) ? code.slice(prefix.length) : ''
-    const value = Number.parseInt(suffix, 10)
-    return Number.isFinite(value) ? Math.max(max, value) : max
-  }, 0)
-  return `${prefix}${String(sequence + 1).padStart(3, '0')}`
-}
-
-async function fetchStage(path: string, options?: { batchId?: string; brandId?: string }) {
-  return unwrap(
-    await api.get<Data<AnyRecord[]>>(
-      `/batches/${path}${query({ ...options, limit: 500 })}`
-    )
-  )
-}
-
-export const fetchMixingReports = (options?: { batchId?: string; brandId?: string }) =>
-  fetchStage('mixing-reports', options)
-export const fetchNJPReports = (options?: { batchId?: string; brandId?: string }) =>
-  fetchStage('njp-reports', options)
-export const fetchAssemblyReports = (options?: { batchId?: string; brandId?: string }) =>
-  fetchStage('assembly-reports', options)
-
-export async function fetchLocalMixings(options?: { brandId?: string; limit?: number }) {
-  return unwrap(
-    await api.get<Data<AnyRecord[]>>(
-      `/mixing${query({ ...options, limit: options?.limit ?? 500 })}`
+      `/mixing/${query({ ...options, limit: options?.limit ?? 500 })}`
     )
   )
 }
 
 export async function fetchLocalMixing(id: string) {
-  return unwrap(await api.get<Data<AnyRecord>>(`/mixing/${id}`))
+  return unwrap(await api.get<Data<AnyRecord>>(`/mixing/${id}/`))
 }
 
 export async function saveLocalMixing(record: AnyRecord) {
-  const { id, createdAt, updatedAt, totalFormulaQtyKg, ...payload } = record
+  const { id, createdAt, updatedAt, ...payload } = record
+
   return unwrap(
     id
-      ? await api.put<Data<AnyRecord>>(`/mixing/${id}`, payload)
-      : await api.post<Data<AnyRecord>>('/mixing', payload)
+      ? await api.put<Data<AnyRecord>>(`/mixing/${id}/`, payload)
+      : await api.post<Data<AnyRecord>>('/mixing/', payload)
   )
 }
 
 export async function deleteLocalMixing(id: string) {
-  return unwrap(await api.delete<Data<AnyRecord>>(`/mixing/${id}`))
+  return unwrap(await api.delete<Data<AnyRecord>>(`/mixing/${id}/`))
 }
 
-export async function startBatchStage(
-  batchId: string,
-  stage: ManufacturingStage,
-  input: StageLifecycleInput = {}
-) {
+// ============================================================================
+// Standalone / Local NJP
+// Django routes:
+//   GET    /api/njp/
+//   POST   /api/njp/
+//   GET    /api/njp/<uuid:item_id>/
+//   PUT    /api/njp/<uuid:item_id>/
+//   DELETE /api/njp/<uuid:item_id>/
+//
+// Finished Goods -> Capsules tab uses fetchLocalNJPs().
+// ============================================================================
+
+export async function fetchLocalNJPs(options?: {
+  brandId?: string
+  productId?: string
+  mixingId?: string
+  search?: string
+  limit?: number
+}) {
   return unwrap(
-    await api.post<Data<AnyRecord>>(`/batches/${batchId}/stages/${stage}/start`, input)
-  )
-}
-
-export async function completeBatchStage(
-  batchId: string,
-  stage: ManufacturingStage,
-  input: AnyRecord
-) {
-  return unwrap(
-    await api.post<Data<AnyRecord>>(`/batches/${batchId}/stages/${stage}/end`, input)
-  )
-}
-
-export async function updateBatchStageLifecycle(
-  batchId: string,
-  stage: ManufacturingStage,
-  input: StageLifecycleInput = {}
-) {
-  return unwrap(
-    await api.put<Data<AnyRecord>>(`/batches/${batchId}/stages/${stage}/lifecycle`, input)
-  )
-}
-
-export async function saveMixingReportWithDeduction(report: AnyRecord) {
-  const batchId = String(report.batchId)
-  const payload = {
-    rmUsage: report.rmUsage || [],
-    nonMedUsage: report.nonMedUsage || [],
-    mixingDates: report.mixingDates || [],
-    mixingNotes: report.mixingNotes || '',
-    mixingDate: report.mixingDate ?? null,
-    mixedPowderName: report.mixedPowderName ?? null,
-    mixedPowderQtyKg: report.mixedPowderQtyKg ?? null,
-    totalFormulaQtyKg: report.totalFormulaQtyKg ?? null,
-    totalMixedQtyKg: report.totalMixedQtyKg ?? null,
-    existingMixedPowderUsedKg: report.existingMixedPowderUsedKg ?? null,
-    startDate: report.startDate ?? null,
-    startTime: report.startTime ?? null,
-    endDate: report.endDate ?? report.mixingDate ?? null,
-    endTime: report.endTime ?? null,
-    status: report.status,
-    remarks: report.remarks ?? report.mixingNotes ?? null,
-    reason: report.reason ?? null
-  }
-  if (report.id && report.status === 'In Mixing') {
-    const result = unwrap(
-      await api.post<Data<AnyRecord>>(`/batches/${batchId}/stages/mixing/end`, payload)
+    await api.get<Data<AnyRecord[]>>(
+      `/njp/${query({ ...options, limit: options?.limit ?? 500 })}`
     )
-    return result.report?.id || result.id
-  }
-  const result = unwrap(
-    report.id
-      ? await api.put<Data<AnyRecord>>(`/batches/${batchId}/mixing`, payload)
-      : await api.post<Data<AnyRecord>>(`/batches/${batchId}/mixing`, payload)
   )
-  return result.id
 }
 
-async function saveStage(stage: 'njp' | 'assembly', report: AnyRecord) {
-  const { id, batchId, brandId, productId, batchCode, brandName, productName, createdAt, updatedAt, ...payload } = report
-  const response = id
-    ? await api.put<Data<AnyRecord>>(`/batches/${batchId}/${stage}`, payload)
-    : await api.post<Data<AnyRecord>>(`/batches/${batchId}/${stage}`, payload)
-  return unwrap(response).id
+export async function fetchLocalNJP(id: string) {
+  return unwrap(await api.get<Data<AnyRecord>>(`/njp/${id}/`))
 }
 
-export const saveNJPReport = <T extends object>(report: T) =>
-  saveStage('njp', report as AnyRecord)
-export const saveAssemblyReport = <T extends object>(report: T) =>
-  saveStage('assembly', report as AnyRecord)
+export async function saveLocalNJP(record: AnyRecord) {
+  const { id, createdAt, updatedAt, ...payload } = record
+
+  return unwrap(
+    id
+      ? await api.put<Data<AnyRecord>>(`/njp/${id}/`, payload)
+      : await api.post<Data<AnyRecord>>('/njp/', payload)
+  )
+}
+
+export async function deleteLocalNJP(id: string) {
+  return unwrap(await api.delete<Data<AnyRecord>>(`/njp/${id}/`))
+}
+
+// ============================================================================
+// Standalone / Local Assembly
+// Django routes:
+//   GET    /api/assembly/
+//   POST   /api/assembly/
+//   GET    /api/assembly/<uuid:item_id>/
+//   PUT    /api/assembly/<uuid:item_id>/
+//   DELETE /api/assembly/<uuid:item_id>/
+// ============================================================================
+
+export async function fetchLocalAssemblies(options?: {
+  brandId?: string
+  productId?: string
+  njpId?: string
+  search?: string
+  limit?: number
+}) {
+  return unwrap(
+    await api.get<Data<AnyRecord[]>>(
+      `/assembly/${query({ ...options, limit: options?.limit ?? 500 })}`
+    )
+  )
+}
+
+export async function fetchLocalAssembly(id: string) {
+  return unwrap(await api.get<Data<AnyRecord>>(`/assembly/${id}/`))
+}
+
+export async function saveLocalAssembly(record: AnyRecord) {
+  const { id, createdAt, updatedAt, ...payload } = record
+
+  return unwrap(
+    id
+      ? await api.put<Data<AnyRecord>>(`/assembly/${id}/`, payload)
+      : await api.post<Data<AnyRecord>>('/assembly/', payload)
+  )
+}
+
+export async function deleteLocalAssembly(id: string) {
+  return unwrap(await api.delete<Data<AnyRecord>>(`/assembly/${id}/`))
+}
 
 export async function fetchFinishedGoods(options?: {
   category?: FGCategory
@@ -364,10 +329,6 @@ export async function fetchFinishedGoods(options?: {
   )
 }
 
-export async function fetchFinishedGoodByBatch(batchId: string) {
-  return unwrap(await api.get<Data<FinishedGood | null>>(`/finished-goods/by-batch/${batchId}`))
-}
-
 export async function fetchFinishedGoodHistory(finishedGoodId: string) {
   return unwrap(
     await api.get<Data<AnyRecord[]>>(
@@ -378,9 +339,11 @@ export async function fetchFinishedGoodHistory(finishedGoodId: string) {
 
 export async function saveFinishedGood(entry: AnyRecord) {
   const { id, createdAt, updatedAt, ...payload } = entry
+
   const result = id
     ? unwrap(await api.put<Data<AnyRecord>>(`/finished-goods/${id}`, payload))
     : unwrap(await api.post<Data<AnyRecord>>('/finished-goods', payload))
+
   return result
 }
 
@@ -406,9 +369,11 @@ export async function fetchVendors(options?: { activeOnly?: boolean }) {
 
 export async function saveVendor(vendor: AnyRecord) {
   const { id, createdAt, updatedAt, ...payload } = vendor
+
   const result = id
     ? unwrap(await api.put<Data<AnyRecord>>(`/vendors/${id}`, payload))
     : unwrap(await api.post<Data<AnyRecord>>('/vendors', payload))
+
   return result.id as string
 }
 
@@ -434,6 +399,7 @@ export async function fetchPurchaseOrders(options?: {
 
 export async function savePurchaseOrder(input: CreatePurchaseOrderInput) {
   const { id, ...payload } = input
+
   return unwrap(
     id
       ? await api.put<Data<AnyRecord>>(`/purchase-orders/${id}`, payload)
@@ -455,9 +421,11 @@ export async function fetchEmployee(id: string) {
 
 export async function saveEmployee(employee: AnyRecord) {
   const { id, createdAt, updatedAt, ...payload } = employee
+
   const result = id
     ? unwrap(await api.put<Data<AnyRecord>>(`/employees/${id}`, payload))
     : unwrap(await api.post<Data<AnyRecord>>('/employees', payload))
+
   return result.id as string
 }
 
@@ -483,9 +451,11 @@ export async function fetchWorkEntries(employeeId?: string) {
 
 export async function saveWorkEntry(entry: AnyRecord) {
   const { id, ...payload } = entry
+
   const result = id
     ? unwrap(await api.put<Data<AnyRecord>>(`/work-entries/${id}`, payload))
     : unwrap(await api.post<Data<AnyRecord>>('/work-entries', payload))
+
   return result.id
 }
 
@@ -509,6 +479,7 @@ export async function saveSalarySheet(sheet: AnyRecord) {
       locked: sheet.locked === true
     })
   )
+
   return result.id
 }
 
@@ -520,9 +491,11 @@ export async function fetchLoans(employeeId?: string) {
 
 export async function saveLoan(loan: AnyRecord) {
   const { id, ...payload } = loan
+
   const result = id
     ? unwrap(await api.put<Data<AnyRecord>>(`/employee-loans/${id}`, payload))
     : unwrap(await api.post<Data<AnyRecord>>('/employee-loans', payload))
+
   return result.id
 }
 
@@ -561,6 +534,7 @@ export async function fetchPODocument(id: string): Promise<PODocument | null> {
 
 export async function savePODocument(input: CreatePODocumentInput): Promise<PODocument> {
   const { id, poNumber, ...payload } = input
+
   return unwrap(
     id
       ? await api.put<Data<PODocument>>(`/po-documents/${id}`, payload)
@@ -588,6 +562,7 @@ export async function fetchExpenses(bookId?: string) {
 
 export async function saveExpense(expense: AnyRecord) {
   const { id, ...payload } = expense
+
   return unwrap(
     id
       ? await api.put<Data<AnyRecord>>(`/expenses/${id}`, payload)

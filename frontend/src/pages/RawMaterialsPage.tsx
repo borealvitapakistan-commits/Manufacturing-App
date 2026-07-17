@@ -13,6 +13,7 @@ import {
   Select,
   TextArea,
   Label,
+  Checkbox,
   Table,
   TableHeader,
   TableBody,
@@ -63,10 +64,20 @@ interface CategoryFormState {
   isActive: boolean
 }
 
+type RawMaterialsView = 'materials' | 'create-material' | 'create-category' | 'categories'
+
 const defaultCategoryForm: CategoryFormState = {
   name: '',
   description: '',
   isActive: true
+}
+
+function viewButtonClass(active: boolean): string {
+  return `rounded-xl border px-4 py-2 text-sm font-medium transition ${
+    active
+      ? 'border-[#1D838D] bg-[#1D838D] text-white'
+      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+  }`
 }
 
 // ============================================================================
@@ -155,6 +166,7 @@ function normalizeText(value: string | null | undefined): string {
 // ============================================================================
 
 export default function RawMaterialsPage() {
+  const [activeView, setActiveView] = useState<RawMaterialsView>('materials')
   const [materials, setMaterials] = useState<RawMaterial[]>([])
   const [categories, setCategories] = useState<RawMaterialCategory[]>([])
   const [form, setForm] = useState<FormState>(defaultForm)
@@ -244,6 +256,7 @@ export default function RawMaterialsPage() {
       })
 
       resetForm()
+      setActiveView('materials')
       await loadData()
     } catch (err) {
       console.error('Failed to save material:', err)
@@ -273,6 +286,7 @@ export default function RawMaterialsPage() {
         type: 'success'
       })
       resetCategoryForm()
+      setActiveView('categories')
       await loadData()
     } catch (err) {
       console.error('Failed to save category:', err)
@@ -321,6 +335,7 @@ export default function RawMaterialsPage() {
       ? categories.find(category => category.id === material.categoryId)
       : categories.find(category => normalizeText(category.name) === normalizeText(material.category || ''))
     setEditingId(material.id)
+    setActiveView('create-material')
     setForm({
       name: material.name || '',
       qty: material.qty?.toString() || '',
@@ -337,6 +352,7 @@ export default function RawMaterialsPage() {
 
   function startCategoryEdit(category: RawMaterialCategory) {
     setCategoryEditingId(category.id)
+    setActiveView('create-category')
     setCategoryForm({
       name: category.name || '',
       description: category.description || '',
@@ -371,9 +387,56 @@ export default function RawMaterialsPage() {
         </div>
       )}
 
-      {/* Form */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'materials')}
+          onClick={() => {
+            resetForm()
+            resetCategoryForm()
+            setActiveView('materials')
+          }}
+        >
+          Raw Materials
+        </button>
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'create-material')}
+          onClick={() => {
+            resetForm()
+            resetCategoryForm()
+            setActiveView('create-material')
+          }}
+        >
+          Create Raw Material
+        </button>
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'create-category')}
+          onClick={() => {
+            resetForm()
+            resetCategoryForm()
+            setActiveView('create-category')
+          }}
+        >
+          Create Category
+        </button>
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'categories')}
+          onClick={() => {
+            resetForm()
+            resetCategoryForm()
+            setActiveView('categories')
+          }}
+        >
+          Categories
+        </button>
+      </div>
+
+      {activeView === 'create-material' && (
       <Card
-        title={editingId ? 'Edit Material' : 'Add Material'}
+        title={editingId ? 'Edit Raw Material' : 'Create Raw Material'}
         actions={
           <div className="flex gap-2">
             {editingId && (
@@ -393,7 +456,7 @@ export default function RawMaterialsPage() {
           </div>
         }
       >
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid max-w-5xl gap-5 md:grid-cols-2">
           <div className="sm:col-span-2">
             <Label>Material Name *</Label>
             <Input
@@ -465,11 +528,19 @@ export default function RawMaterialsPage() {
           </div>
         </div>
       </Card>
+      )}
 
+      {activeView === 'create-category' && (
       <Card
-        title="Raw Material Categories"
+        title={categoryEditingId ? 'Edit Category' : 'Create Category'}
         actions={(
           <div className="flex gap-2">
+            <Button
+              variant="subtle"
+              onClick={() => setCategoryForm({ ...categoryForm, name: 'Other', description: 'Default category for uncategorized raw materials.' })}
+            >
+              Use Other Defaults
+            </Button>
             {categoryEditingId && (
               <Button variant="ghost" onClick={resetCategoryForm}>Cancel</Button>
             )}
@@ -479,9 +550,9 @@ export default function RawMaterialsPage() {
           </div>
         )}
       >
-        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] md:items-end">
+        <div className="max-w-4xl space-y-5">
           <div>
-            <Label>Category Name</Label>
+            <Label>Category Name *</Label>
             <Input
               value={categoryForm.name}
               onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })}
@@ -491,22 +562,27 @@ export default function RawMaterialsPage() {
           <div>
             <Label>Description</Label>
             <TextArea
-              rows={1}
+              rows={5}
               value={categoryForm.description}
               onChange={e => setCategoryForm({ ...categoryForm, description: e.target.value })}
               placeholder="Optional category notes"
             />
           </div>
-          <Button
-            type="button"
-            variant="subtle"
-            onClick={() => setCategoryForm({ ...categoryForm, name: 'Other', description: 'Default category for uncategorized raw materials.' })}
-          >
-            Other
-          </Button>
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+            <Checkbox
+              id="raw-material-category-active"
+              label="Active category"
+              checked={categoryForm.isActive}
+              onChange={e => setCategoryForm({ ...categoryForm, isActive: e.target.checked })}
+            />
+          </div>
         </div>
+      </Card>
+      )}
 
-        <div className="mt-4 divide-y divide-zinc-200 border-y border-zinc-200">
+      {activeView === 'categories' && (
+      <Card title="Categories">
+        <div className="divide-y divide-zinc-200 border-y border-zinc-200">
           {categories.length === 0 ? (
             <div className="py-3 text-sm text-zinc-500">No categories found.</div>
           ) : (
@@ -527,9 +603,10 @@ export default function RawMaterialsPage() {
           )}
         </div>
       </Card>
+      )}
 
-      {/* Table */}
-      <Card title="All Raw Materials">
+      {activeView === 'materials' && (
+      <Card title="Raw Materials">
         <Table>
           <TableHeader>
             <TableRow>
@@ -541,20 +618,17 @@ export default function RawMaterialsPage() {
               <TableHead>COA Link</TableHead>
               <TableHead>Comments</TableHead>
               <TableHead>Location</TableHead>
+              <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoading colSpan={8} />
+              <TableLoading colSpan={9} />
             ) : materials.length === 0 ? (
-              <TableEmpty colSpan={8} message="No raw materials yet. Add your first material!" />
+              <TableEmpty colSpan={9} message="No raw materials yet. Add your first material!" />
             ) : (
               materials.map((material, index) => (
-                <TableRow
-                  key={material.id}
-                  clickable
-                  onClick={() => startEdit(material)}
-                >
+                <TableRow key={material.id}>
                   <TableCell className="text-zinc-500">{index + 1}</TableCell>
                   <TableCell className="font-mono font-semibold">{material.code}</TableCell>
                   <TableCell>{material.name}</TableCell>
@@ -562,13 +636,24 @@ export default function RawMaterialsPage() {
                   <TableCell>{material.qty ?? 0}</TableCell>
                   <TableCell>{material.coaLink || '-'}</TableCell>
                   <TableCell>{material.comments || '-'}</TableCell>
-                  <TableCell>{material.location || '—'}</TableCell>
+                  <TableCell>{material.location || '-'}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button variant="subtle" size="sm" onClick={() => startEdit(material)}>
+                        Edit
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={() => setDeleteTarget(material)}>
+                        Delete
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))
             )}
           </TableBody>
         </Table>
       </Card>
+      )}
 
       {/* Delete Confirmation */}
       <ConfirmDialog

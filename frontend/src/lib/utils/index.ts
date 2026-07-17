@@ -4,7 +4,6 @@
 
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import type { Batch, BatchStatus, ManufacturingStage } from '@/types'
 
 /**
  * Merge Tailwind CSS classes with clsx
@@ -84,75 +83,9 @@ export function mgToKg(mg: number): number {
 }
 
 /**
- * Derive batch status from flags
- */
-export function deriveBatchStatus(batch: {
-  hasMixing?: boolean
-  hasNJP?: boolean
-  hasAssembly?: boolean
-  status?: string
-}): BatchStatus {
-  if (batch.hasAssembly || batch.status === 'finalized') return 'finalized'
-  if (batch.hasNJP || batch.status === 'assemblyPending') return 'assemblyPending'
-  if (batch.hasMixing || batch.status === 'ngpPending') return 'ngpPending'
-  return 'mixingPending'
-}
-
-export function isStageReportCompleted(stage: ManufacturingStage, report: unknown): boolean {
-  if (!report || typeof report !== 'object') return false
-  const status = String((report as { status?: unknown }).status || '')
-  if (stage === 'mixing') return status === 'Mixing Completed'
-  if (stage === 'njp') return status === 'NJP Completed'
-  return status === 'Assembly Completed'
-}
-
-export function isStageCompleted(
-  stage: ManufacturingStage,
-  batch: { hasMixing?: boolean; hasNJP?: boolean; hasAssembly?: boolean },
-  report?: unknown
-): boolean {
-  if (stage === 'mixing') return Boolean(batch.hasMixing || isStageReportCompleted(stage, report))
-  if (stage === 'njp') return Boolean(batch.hasNJP || isStageReportCompleted(stage, report))
-  return Boolean(batch.hasAssembly || isStageReportCompleted(stage, report))
-}
-
-export function isStageInProgress(stage: ManufacturingStage, report: unknown): boolean {
-  if (!report || typeof report !== 'object') return false
-  const status = String((report as { status?: unknown }).status || '')
-  if (stage === 'mixing') return status === 'In Mixing'
-  if (stage === 'njp') return status === 'In NJP'
-  return status === 'In Assembly'
-}
-
-export function getBatchLifecycleLabel(batch: Partial<Batch>): string {
-  if (batch.batchStatus) return batch.batchStatus
-  return getStatusLabel(deriveBatchStatus(batch))
-}
-
-/**
- * Get next workflow stage info
- */
-export function getNextStage(status: BatchStatus): {
-  label: string
-  route: string
-  action: string
-} | null {
-  switch (status) {
-    case 'mixingPending':
-      return { label: 'Send to Mixing', route: 'mixing', action: 'Start mixing process' }
-    case 'ngpPending':
-      return { label: 'Go to NJP', route: 'njp', action: 'Start encapsulation' }
-    case 'assemblyPending':
-      return { label: 'Go to Assembly', route: 'assembly', action: 'Start packaging' }
-    case 'finalized':
-      return null
-  }
-}
-
-/**
  * Get status display label
  */
-export function getStatusLabel(status: BatchStatus): string {
+export function getStatusLabel(status: string): string {
   switch (status) {
     case 'mixingPending':
       return 'New / Send to Mixing'
@@ -163,12 +96,13 @@ export function getStatusLabel(status: BatchStatus): string {
     case 'finalized':
       return 'Finalized'
   }
+  return status
 }
 
 /**
  * Get status color classes
  */
-export function getStatusColor(status: BatchStatus): string {
+export function getStatusColor(status: string): string {
   switch (status) {
     case 'mixingPending':
       return 'bg-emerald-100 text-emerald-800'
@@ -179,6 +113,7 @@ export function getStatusColor(status: BatchStatus): string {
     case 'finalized':
       return 'bg-emerald-100 text-emerald-800'
   }
+  return 'bg-zinc-100 text-zinc-800'
 }
 
 /**

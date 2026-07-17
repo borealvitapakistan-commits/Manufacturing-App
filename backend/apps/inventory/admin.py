@@ -1,3 +1,1 @@
-from django.contrib import admin
-
-# Register your models here.
+"""No Django admin registrations because this app does not use ORM models."""

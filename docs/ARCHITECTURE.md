@@ -1,10 +1,11 @@
-# Django migration architecture
+# Manufacturing app architecture
 
 ## Backend rule
 
 There are no Django model classes and no Django database migrations. Django is
-the validation, business-service, and REST boundary. Supabase PostgreSQL remains
-the canonical database.
+the validation, business-service, and REST boundary. Persistence now goes
+through Supabase/PostgreSQL only. The temporary local JSON testing layer has
+been removed from the backend.
 
 ## Frontend rule
 
@@ -23,20 +24,13 @@ database access.
 | Django app | Supabase tables / responsibility |
 |---|---|
 | `common` | Health, response/error conventions |
-| `dashboard` | Operational counts, low stock, pending work |
-| `brands` | `brands` |
-| `raw_materials` | `raw_materials`, stock adjustments |
-| `products` | `products`, JSONB formulas |
-| `labels` | `label_inventory` |
-| `batches` | `batches`, mixing, NJP, assembly, inventory RPCs |
-| `inventory` | `finished_goods`, `finished_goods_history` |
-| `procurement` | `vendors`, `purchase_orders` |
-| `hr` | employees, attendance, work, salary, loans |
-| `finance` | expense books and expenses |
-| `reports` | pricing, traceability, inventory/payroll/expense summaries |
+| `commercial` | Brands, products, product formulas, product price calculator |
+| `inventory` | Raw materials, labels, bottles/lids, finished goods views |
+| `manufacturing` | Mixing, NJP/encapsulation, assembly |
+| `reports` | Mixing, NJP, assembly, and manufacturing traceability reports |
 
-Mixing, NJP, and assembly remain inside the `batches` app because they are
-stages of one production aggregate.
+The old batch workflow app has been removed. Assembly is the point where the
+brand-based Batch Code is generated for finished bottle traceability.
 
 ## API conventions
 
@@ -48,11 +42,10 @@ stages of one production aggregate.
 
 ## Database deployment
 
-Apply `supabase/migrations/001...016` in order. During migration testing, leave
-the old anonymous policies in place only if the old Next.js app still needs
-them. Then apply `017_backend_workflow_functions.sql`. After final client
-cutover, apply `018_django_api_cutover.sql` to remove direct `anon` and
-`authenticated` access to application tables and RPC functions.
+Apply the new Supabase migration set in `supabase/migrations-2/` in numeric
+order. That schema drops the legacy tables first, then creates the core
+commercial, inventory, manufacturing, reporting, and grant structures used by
+the Django backend.
 
 ## Backend API groups
 
@@ -60,14 +53,11 @@ cutover, apply `018_django_api_cutover.sql` to remove direct `anon` and
 - `/api/raw-materials`
 - `/api/products`
 - `/api/labels`
-- `/api/batches`
+- `/api/mixing`
+- `/api/njp`
+- `/api/assembly`
+- `/api/manufacturing`
 - `/api/finished-goods`
-- `/api/vendors`
-- `/api/purchase-orders`
-- `/api/po-documents`
-- `/api/employees`, `/api/time-entries`, `/api/work-entries`
-- `/api/salary-sheets`, `/api/employee-loans`
-- `/api/expense-books`, `/api/expenses`
 - `/api/reports/*`
 
 Both the original slashless paths and Django-style trailing-slash paths are

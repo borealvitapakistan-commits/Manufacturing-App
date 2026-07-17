@@ -1,1 +1,1 @@
-"""Business services with switchable local JSON or Supabase persistence."""
+"""Shared project services for Supabase/PostgreSQL-backed persistence."""

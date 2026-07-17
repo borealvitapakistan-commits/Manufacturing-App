@@ -30,16 +30,9 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     "apps.common",
-    "apps.dashboard",
-    "apps.brands",
-    "apps.raw_materials",
-    "apps.products",
-    "apps.labels",
-    "apps.batches",
+    "apps.commercial",
     "apps.inventory",
-    "apps.procurement",
-    "apps.hr",
-    "apps.finance",
+    "apps.manufacturing",
     "apps.reports",
 ]
 
@@ -58,7 +51,6 @@ ASGI_APPLICATION = "config.asgi.application"
 
 # Django's ORM is intentionally disabled.
 DATABASES: dict = {}
-LOCAL_DATA_MODE = env_bool("LOCAL_DATA_MODE", True)
 
 
 # Password validation

@@ -1,9 +1,6 @@
 from typing import Any
 
-from django.conf import settings
-
 from .converters import payload_to_db, row_to_app, rows_to_app
-from .local_supabase import LocalSupabaseClient
 from .supabase_client import SupabaseConfigurationError, get_supabase
 
 
@@ -30,14 +27,9 @@ def translate_error(error: Exception) -> ServiceError:
 
 class TableService:
     table_name = ""
-    _local_client: LocalSupabaseClient | None = None
 
     @classmethod
     def client(cls):
-        if settings.LOCAL_DATA_MODE:
-            if TableService._local_client is None:
-                TableService._local_client = LocalSupabaseClient()
-            return TableService._local_client
         return get_supabase()
 
     @classmethod
@@ -82,7 +74,8 @@ class TableService:
     @classmethod
     def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            response = cls.client().table(cls.table_name).insert(payload_to_db(payload)).execute()
+            db_payload = payload_to_db(payload, drop={"id", "createdAt", "updatedAt"})
+            response = cls.client().table(cls.table_name).insert(db_payload).execute()
             if not response.data:
                 raise ServiceError(f"Failed to create {cls.table_name} record", 502)
             return row_to_app(response.data[0]) or {}

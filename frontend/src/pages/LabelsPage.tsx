@@ -48,6 +48,8 @@ interface FormState {
   isActive: boolean
 }
 
+type LabelView = 'labels' | 'create-label'
+
 const defaultForm: FormState = {
   brandId: '',
   productId: '',
@@ -71,11 +73,20 @@ const LABEL_TYPE_OPTIONS: Array<{ value: LabelInventoryType; label: string }> = 
 
 const DOSAGE_TYPE_OPTIONS: LabelDosageType[] = ['60', '90', '120', '180', '240']
 
+function viewButtonClass(active: boolean): string {
+  return `rounded-xl border px-4 py-2 text-sm font-medium transition ${
+    active
+      ? 'border-[#1D838D] bg-[#1D838D] text-white'
+      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+  }`
+}
+
 function formatLabelType(value: string | null | undefined): string {
   return LABEL_TYPE_OPTIONS.find(option => option.value === value)?.label || '-'
 }
 
 export default function LabelsPage() {
+  const [activeView, setActiveView] = useState<LabelView>('labels')
   const [labels, setLabels] = useState<LabelInventory[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -183,10 +194,11 @@ export default function LabelsPage() {
       })
 
       resetForm()
+      setActiveView('labels')
       await loadData()
     } catch (err) {
       console.error('Failed to save label inventory:', err)
-      setError('Failed to save label inventory.')
+      setError(err instanceof Error ? err.message : 'Failed to save label inventory.')
     } finally {
       setSaving(false)
     }
@@ -211,6 +223,7 @@ export default function LabelsPage() {
 
   function startEdit(item: LabelInventory) {
     setEditingId(item.id)
+    setActiveView('create-label')
     setForm({
       brandId: item.brandId,
       productId: item.productId,
@@ -281,8 +294,32 @@ export default function LabelsPage() {
         </div>
       )}
 
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'labels')}
+          onClick={() => {
+            resetForm()
+            setActiveView('labels')
+          }}
+        >
+          Labels
+        </button>
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'create-label')}
+          onClick={() => {
+            resetForm()
+            setActiveView('create-label')
+          }}
+        >
+          Create Label
+        </button>
+      </div>
+
+      {activeView === 'create-label' && (
       <Card
-        title={editingId ? 'Edit Label Inventory' : 'Add Label Inventory'}
+        title={editingId ? 'Edit Label' : 'Create Label'}
         actions={(
           <div className="flex gap-2">
             {editingId && (
@@ -397,8 +434,10 @@ export default function LabelsPage() {
           </div>
         </div>
       </Card>
+      )}
 
-      <Card title="Label Inventory">
+      {activeView === 'labels' && (
+      <Card title="Labels">
         <Table>
           <TableHeader>
             <TableRow>
@@ -483,6 +522,7 @@ export default function LabelsPage() {
           </TableBody>
         </Table>
       </Card>
+      )}
 
       <ConfirmDialog
         open={!!deleteTarget}

@@ -14,15 +14,11 @@ class CommonAPITests(SimpleTestCase):
     def setUp(self):
         self.client = APIClient()
 
-    @override_settings(LOCAL_DATA_MODE=True)
-    def test_health_reports_local_data_mode(self):
-        response = self.client.get("/api/health/")
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["ok"])
-        self.assertTrue(response.json()["localDataMode"])
-        self.assertEqual(response.json()["database"], "local-json")
-
-    @override_settings(LOCAL_DATA_MODE=False)
+    @override_settings(
+        SUPABASE_URL="https://example.supabase.co",
+        SUPABASE_SERVICE_ROLE_KEY="service-key",
+        SUPABASE_ANON_KEY="",
+    )
     @patch("apps.common.views.get_supabase")
     def test_health_checks_live_supabase_connection(self, mocked_get_supabase):
         response = self.client.get("/api/health/")
@@ -30,9 +26,9 @@ class CommonAPITests(SimpleTestCase):
         self.assertTrue(response.json()["ok"])
         self.assertTrue(response.json()["supabaseConnected"])
         self.assertEqual(response.json()["database"], "supabase")
+        self.assertNotIn("localDataMode", response.json())
 
     @override_settings(
-        LOCAL_DATA_MODE=False,
         SUPABASE_URL="",
         SUPABASE_SERVICE_ROLE_KEY="",
         SUPABASE_ANON_KEY="",
@@ -44,7 +40,6 @@ class CommonAPITests(SimpleTestCase):
         self.assertFalse(response.json()["supabaseConnected"])
 
     @override_settings(
-        LOCAL_DATA_MODE=False,
         SUPABASE_URL="",
         SUPABASE_SERVICE_ROLE_KEY="",
         SUPABASE_ANON_KEY="",
@@ -55,8 +50,11 @@ class CommonAPITests(SimpleTestCase):
         self.assertIn("Supabase is not configured", response.json()["error"])
 
     def test_slashless_alias_resolves(self):
-        self.assertEqual(resolve("/api/batches").url_name, None)
-        self.assertEqual(resolve("/api/purchase-orders").url_name, None)
+        self.assertEqual(resolve("/api/mixing").url_name, None)
+        self.assertEqual(
+            resolve("/api/product-price-calculator/11111111-1111-1111-1111-111111111111").url_name,
+            None,
+        )
 
 
 class ConverterTests(SimpleTestCase):

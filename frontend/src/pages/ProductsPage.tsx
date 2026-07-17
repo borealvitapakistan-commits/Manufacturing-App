@@ -53,6 +53,8 @@ interface FormState {
   rm: RMFormRow[]
 }
 
+type ProductView = 'products' | 'create-product'
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -84,6 +86,14 @@ const createDefaultForm = (): FormState => ({
   npn: '',
   rm: [emptyRM()]
 })
+
+function viewButtonClass(active: boolean): string {
+  return `rounded-xl border px-4 py-2 text-sm font-medium transition ${
+    active
+      ? 'border-[#1D838D] bg-[#1D838D] text-white'
+      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+  }`
+}
 
 // Parse label claim string to mg value
 function parseLabelClaimToMg(claim: string): number {
@@ -134,6 +144,7 @@ function findMatchingRawMaterial(
 // ============================================================================
 
 export default function ProductsPage() {
+  const [activeView, setActiveView] = useState<ProductView>('products')
   const [products, setProducts] = useState<Product[]>([])
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([])
   const [categories, setCategories] = useState<RawMaterialCategory[]>([])
@@ -247,10 +258,11 @@ export default function ProductsPage() {
       })
 
       resetForm()
+      setActiveView('products')
       await loadData()
     } catch (err) {
       console.error('Failed to save product:', err)
-      setError('Failed to save product.')
+      setError(err instanceof Error ? err.message : 'Failed to save product.')
     } finally {
       setSaving(false)
     }
@@ -280,6 +292,7 @@ export default function ProductsPage() {
 
   function startEdit(product: Product) {
     setEditingId(product.id)
+    setActiveView('create-product')
     setForm({
       name: product.name || '',
       type: product.type || 'capsule',
@@ -371,23 +384,26 @@ export default function ProductsPage() {
       : []
 
     return (
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <Select
-            value={row.categoryId}
-            onChange={e => updateRMCategory(row.id, e.target.value)}
-          >
-            <option value="">Select Category</option>
-            {activeCategories.map(category => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </Select>
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div>
+            <Label>Raw Material Category</Label>
+            <Select
+              value={row.categoryId}
+              onChange={e => updateRMCategory(row.id, e.target.value)}
+            >
+              <option value="">Select Category</option>
+              {activeCategories.map(category => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </Select>
+          </div>
           <Button
             type="button"
             variant="subtle"
-            size="sm"
+            className="w-full sm:w-auto"
             disabled={!otherCategory}
             onClick={() => otherCategory && updateRMCategory(row.id, otherCategory.id)}
           >
@@ -395,6 +411,7 @@ export default function ProductsPage() {
           </Button>
         </div>
         <div>
+          <Label>Raw Material Name</Label>
           <Select
             value={row.rawMaterialId}
             onChange={e => updateRMSelection(row.id, e.target.value)}
@@ -430,10 +447,32 @@ export default function ProductsPage() {
         </div>
       )}
 
-      <div className="grid gap-8">
-        {/* Form Card */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'products')}
+          onClick={() => {
+            resetForm()
+            setActiveView('products')
+          }}
+        >
+          Products
+        </button>
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'create-product')}
+          onClick={() => {
+            resetForm()
+            setActiveView('create-product')
+          }}
+        >
+          Create Product
+        </button>
+      </div>
+
+      {activeView === 'create-product' && (
         <Card
-          title={editingId ? 'Edit Product' : 'Add Product'}
+          title={editingId ? 'Edit Product' : 'Create Product'}
           actions={
             <div className="flex gap-2 flex-wrap">
               <Button variant="ghost" onClick={resetForm}>Clear</Button>
@@ -445,8 +484,8 @@ export default function ProductsPage() {
         >
           <div className="space-y-4">
             {/* Product Details */}
-            <div className="grid items-end gap-3 md:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_minmax(12rem,1fr)_auto]">
-              <div>
+            <div className="grid max-w-6xl gap-5 lg:grid-cols-3">
+              <div className="lg:col-span-2">
                 <Label>Product Name *</Label>
                 <Input
                   value={form.name}
@@ -475,86 +514,52 @@ export default function ProductsPage() {
                   placeholder="e.g., 80126068"
                 />
               </div>
-              <div className="flex gap-2 md:justify-end">
-                <Button variant="subtle" onClick={addRMRow}>+ Add RM</Button>
-              </div>
             </div>
 
-            {/* RM Editor - Mobile */}
-            <div className="md:hidden space-y-3">
-              {form.rm.map((r, idx) => (
-                <div key={r.id} className="rounded-xl border border-zinc-200 p-3 bg-white">
-                  <div className="text-xs text-zinc-500 mb-1">Sr {idx + 1}</div>
-                  <div className="mb-2">
-                    <Label className="text-xs">Raw Material</Label>
-                    {renderRawMaterialSelect(r)}
-                  </div>
-                  <div className="mb-2">
-                    <Label className="text-xs">Label Claim</Label>
-                    <Input
-                      placeholder="e.g., 100 mg per capsule"
-                      value={r.labelClaim}
-                      onChange={e => updateRMRow(r.id, 'labelClaim', e.target.value)}
-                    />
-                  </div>
-                  <div className="flex justify-end">
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => removeRMRow(r.id)}
-                    >
-                      Delete
-                    </Button>
-                  </div>
+            <div className="border-t border-zinc-200 pt-5">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h4 className="text-base font-semibold text-zinc-950">Raw Materials</h4>
+                  <p className="text-sm text-zinc-500">Select a category, then choose the raw material and enter its label claim.</p>
                 </div>
-              ))}
-            </div>
+                <Button variant="subtle" onClick={addRMRow}>Add RM</Button>
+              </div>
 
-            {/* RM Editor - Desktop */}
-            <div className="hidden min-w-0 md:block">
-              <Table className="min-w-[680px]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">Sr</TableHead>
-                    <TableHead>Raw Material</TableHead>
-                    <TableHead>Label Claim</TableHead>
-                    <TableHead className="w-16"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {form.rm.map((r, idx) => (
-                    <TableRow key={r.id}>
-                      <TableCell>{idx + 1}</TableCell>
-                      <TableCell>
-                        {renderRawMaterialSelect(r)}
-                      </TableCell>
-                      <TableCell>
+              <div className="space-y-4">
+                {form.rm.map((r, idx) => (
+                  <div key={r.id} className="rounded-lg border border-zinc-200 bg-white p-4">
+                    <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="font-semibold text-zinc-900">Raw Material {idx + 1}</div>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => removeRMRow(r.id)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+                      <div>{renderRawMaterialSelect(r)}</div>
+                      <div>
+                        <Label>Label Claim</Label>
                         <Input
                           placeholder="e.g., 100 mg per capsule"
                           value={r.labelClaim}
                           onChange={e => updateRMRow(r.id, 'labelClaim', e.target.value)}
                         />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => removeRMRow(r.id)}
-                        >
-                          Delete
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </Card>
+      )}
 
-        {/* Products List Card */}
+      {activeView === 'products' && (
         <Card
-          title="Products in System"
+          title="Products"
           actions={
             <div className="flex gap-2 items-center w-full sm:w-auto">
               <Input
@@ -625,7 +630,7 @@ export default function ProductsPage() {
             </Table>
           </div>
         </Card>
-      </div>
+      )}
 
       {/* Delete Confirmation */}
       <ConfirmDialog
@@ -633,7 +638,7 @@ export default function ProductsPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="Delete Product?"
-        description={`Are you sure you want to delete "${deleteTarget?.name}"? This may affect batches that use this product.`}
+        description={`Are you sure you want to delete "${deleteTarget?.name}"? This may affect manufacturing records that use this product.`}
         confirmLabel="Delete"
         variant="danger"
         loading={deleting}

@@ -3,7 +3,6 @@
 // ============================================================================
 
 import { cn } from '@/lib/utils'
-import type { BatchStatus } from '@/types'
 
 interface BadgeProps {
   children: React.ReactNode
@@ -33,22 +32,22 @@ export function Badge({ children, variant = 'default', className }: BadgeProps) 
   )
 }
 
-// Status Badge for Batches
+// Status Badge
 interface StatusBadgeProps {
-  status: BatchStatus
+  status: string
   onClick?: () => void
   className?: string
 }
 
 export function StatusBadge({ status, onClick, className }: StatusBadgeProps) {
-  const statusConfig: Record<BatchStatus, { label: string; variant: BadgeProps['variant'] }> = {
+  const statusConfig: Record<string, { label: string; variant: BadgeProps['variant'] }> = {
     mixingPending: { label: 'Send to Mixing', variant: 'success' },
     ngpPending: { label: 'Mixing Complete → NJP', variant: 'warning' },
     assemblyPending: { label: 'NJP Complete → Assembly', variant: 'warning' },
     finalized: { label: 'Finalized', variant: 'success' }
   }
 
-  const config = statusConfig[status]
+  const config = statusConfig[status] || { label: status, variant: 'default' as const }
 
   return (
     <span

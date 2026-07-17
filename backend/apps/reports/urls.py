@@ -1,28 +1,20 @@
 from django.urls import path
 
 from .views import (
-    BatchPricingView,
-    BatchTraceabilityView,
-    ExpenseSummaryView,
-    InventorySummaryView,
-    PayrollSummaryView,
-    PurchaseOrderReportView,
+    AssemblyReportDetailView,
+    AssemblyReportListView,
+    MixingReportDetailView,
+    MixingReportListView,
+    NJPReportDetailView,
+    NJPReportListView,
 )
 
 
 urlpatterns = [
-    path("batch-pricing/<uuid:batch_id>/", BatchPricingView.as_view(), name="report-batch-pricing"),
-    path(
-        "batch-traceability/<uuid:batch_id>/",
-        BatchTraceabilityView.as_view(),
-        name="report-batch-traceability",
-    ),
-    path("inventory-summary/", InventorySummaryView.as_view(), name="report-inventory"),
-    path("payroll-summary/", PayrollSummaryView.as_view(), name="report-payroll"),
-    path("expense-summary/", ExpenseSummaryView.as_view(), name="report-expense"),
-    path(
-        "purchase-order/<uuid:po_id>/",
-        PurchaseOrderReportView.as_view(),
-        name="report-purchase-order",
-    ),
+    path("mixing/", MixingReportListView.as_view(), name="report-mixing-list"),
+    path("mixing/<str:item_id>/", MixingReportDetailView.as_view(), name="report-mixing-detail"),
+    path("njp/", NJPReportListView.as_view(), name="report-njp-list"),
+    path("njp/<str:item_id>/", NJPReportDetailView.as_view(), name="report-njp-detail"),
+    path("assembly/", AssemblyReportListView.as_view(), name="report-assembly-list"),
+    path("assembly/<str:item_id>/", AssemblyReportDetailView.as_view(), name="report-assembly-detail"),
 ]

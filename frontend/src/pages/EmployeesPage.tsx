@@ -1217,7 +1217,7 @@ export default function EmployeesPage() {
                 />
               </div>
               <div>
-                <Label>Batch / Ref</Label>
+                <Label>Work / Ref</Label>
                 <Input
                   value={workForm.batchCode}
                   onChange={e => setWorkForm({ ...workForm, batchCode: e.target.value })}

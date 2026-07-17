@@ -24,15 +24,21 @@ const traceabilityModules: ModuleLink[] = [
     type: 'Traceability'
   },
   {
-    href: '/batches',
-    title: 'Batch',
-    description: 'Create, modify and complete batch records. Assembly stays inside batch.',
+    href: '/assembly',
+    title: 'Assembly',
+    description: 'Trace bottle assembly from completed NJP capsules.',
     type: 'Traceability'
   },
   {
     href: '/finished-goods',
     title: 'Finished Goods',
-    description: 'Trace finished inventory after batch completion.',
+    description: 'Trace finished inventory after assembly completion.',
+    type: 'Traceability'
+  },
+  {
+    href: '/manufacturing-reports',
+    title: 'Manufacturing Reports',
+    description: 'Download and print reports for powders, capsules and bottles.',
     type: 'Traceability'
   },
   {
@@ -52,15 +58,24 @@ const traceabilityModules: ModuleLink[] = [
     title: 'Labels',
     description: 'Track label stock by brand, product, type and dosage.',
     type: 'Traceability'
-  }
-]
-
-const setupModules: ModuleLink[] = [
+  },
+  {
+    href: '/bottles-lids',
+    title: 'Bottles / Lids',
+    description: 'Track capsule bottles, jars and lid inventory quantities.',
+    type: 'Traceability'
+  },
+  {
+    href: '/product-price-calculator',
+    title: 'Product Price Calculator',
+    description: 'Calculate product formula, packaging and CAD pricing.',
+    type: 'Traceability'
+  },
   {
     href: '/brands',
     title: 'Brands',
     description: 'Maintain brand codes, identity and active status.',
-    type: 'Setup'
+    type: 'Traceability'
   }
 ]
 
@@ -177,11 +192,6 @@ export default function HomePage() {
       <section>
         <h2 className="text-lg font-semibold">Traceability Core</h2>
         <ModuleRows modules={traceabilityModules} />
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold">Setup</h2>
-        <ModuleRows modules={setupModules} />
       </section>
 
       <section>
