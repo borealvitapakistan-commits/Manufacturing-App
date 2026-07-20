@@ -48,6 +48,8 @@ interface FormState {
   isActive: boolean
 }
 
+type BrandView = 'brands' | 'create-brand'
+
 const defaultForm: FormState = {
   name: '',
   codePrefix: '',
@@ -64,7 +66,16 @@ const defaultForm: FormState = {
   isActive: true
 }
 
+function viewButtonClass(active: boolean): string {
+  return `rounded-xl border px-4 py-2 text-sm font-medium transition ${
+    active
+      ? 'border-[#1D838D] bg-[#1D838D] text-white'
+      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+  }`
+}
+
 export default function BrandsPage() {
+  const [activeView, setActiveView] = useState<BrandView>('brands')
   const [brands, setBrands] = useState<Brand[]>([])
   const [form, setForm] = useState<FormState>(defaultForm)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -134,6 +145,7 @@ export default function BrandsPage() {
       })
 
       resetForm()
+      setActiveView('brands')
       await loadData()
     } catch (err) {
       console.error('Failed to save brand:', err)
@@ -162,6 +174,7 @@ export default function BrandsPage() {
 
   function startEdit(brand: Brand) {
     setEditingId(brand.id)
+    setActiveView('create-brand')
     setForm({
       name: brand.name || '',
       codePrefix: brand.codePrefix || '',
@@ -247,13 +260,45 @@ export default function BrandsPage() {
         </div>
       )}
 
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'brands')}
+          onClick={() => {
+            resetForm()
+            setActiveView('brands')
+          }}
+        >
+          Brands
+        </button>
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'create-brand')}
+          onClick={() => {
+            resetForm()
+            setActiveView('create-brand')
+          }}
+        >
+          Create Brand
+        </button>
+      </div>
+
       {/* Form */}
+      {activeView === 'create-brand' && (
       <Card
-        title={editingId ? 'Edit Brand' : 'Add Brand'}
+        title={editingId ? 'Edit Brand' : 'Create Brand'}
         actions={
           <div className="flex gap-2">
             {editingId && (
-              <Button variant="ghost" onClick={resetForm}>Cancel</Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  resetForm()
+                  setActiveView('brands')
+                }}
+              >
+                Cancel
+              </Button>
             )}
             <Button onClick={handleSave} loading={saving}>
               {saving ? 'Saving...' : editingId ? 'Update Brand' : 'Save Brand'}
@@ -403,9 +448,11 @@ export default function BrandsPage() {
           </div>
         </div>
       </Card>
+      )}
 
       {/* Table */}
-      <Card title="All Brands">
+      {activeView === 'brands' && (
+      <Card title="Brands">
         <Table>
           <TableHeader>
             <TableRow>
@@ -424,7 +471,7 @@ export default function BrandsPage() {
             {loading ? (
               <TableLoading colSpan={9} />
             ) : brands.length === 0 ? (
-              <TableEmpty colSpan={9} message="No brands yet. Add your first brand!" />
+              <TableEmpty colSpan={9} message="No brands found. Add your first brand." />
             ) : (
               brands.map(brand => (
                 <TableRow key={brand.id}>
@@ -443,7 +490,7 @@ export default function BrandsPage() {
                       <span className="text-zinc-400">No logo</span>
                     )}
                   </TableCell>
-                  <TableCell>{brand.shortName || '—'}</TableCell>
+                  <TableCell>{brand.shortName || '-'}</TableCell>
                   <TableCell>
                     {brand.addressLine1 || brand.city || brand.province || brand.country || brand.phone ? (
                       <div className="max-w-[220px] text-xs leading-relaxed text-zinc-600">
@@ -492,6 +539,7 @@ export default function BrandsPage() {
           </TableBody>
         </Table>
       </Card>
+      )}
 
       {/* Delete Confirmation */}
       <ConfirmDialog

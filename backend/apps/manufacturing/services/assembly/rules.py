@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from apps.inventory.services.bottles_lids import BOTTLE_TYPES, CAPSULE_TYPES
+from apps.inventory.services.bottles_lids import BOTTLE_TYPES, CAPSULE_TYPES, BottleLidService
+from apps.inventory.services.labels import LabelService
+from apps.manufacturing.services.njp import NJPService
+from services import db
 from services.base_service import ServiceError
 from services.converters import to_json_value
 

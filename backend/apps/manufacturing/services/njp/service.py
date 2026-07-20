@@ -6,14 +6,13 @@ from typing import Any
 
 from django.utils import timezone
 
-from apps.manufacturing.services.mixing_db import DatabaseMixingService
-from apps.manufacturing.services.njp import NJPRules
+from apps.manufacturing.services.mixing import MixingService
 from services import db
 from services.base_service import ServiceError
 from services.converters import to_json_value
+from .rules import NJPRules
 
-
-class DatabaseNJPService(NJPRules):
+class NJPService(NJPRules):
     @classmethod
     def _normalize_session_date(cls, value: Any) -> str | None:
         """Convert supported session date values to ``YYYY-MM-DD``.
@@ -103,7 +102,7 @@ class DatabaseNJPService(NJPRules):
     @classmethod
     def _find_mixing(cls, mixing_id: str) -> dict[str, Any]:
         try:
-            return DatabaseMixingService.get(mixing_id)
+            return MixingService.get(mixing_id)
         except ServiceError as error:
             if error.status_code == 404:
                 raise ServiceError(
@@ -563,5 +562,4 @@ class DatabaseNJPService(NJPRules):
         db.execute(db.client().table("njp_runs").delete().eq("id", item_id))
         return {"success": True}
 
-
-__all__ = ["DatabaseNJPService"]
+__all__ = ["NJPService"]

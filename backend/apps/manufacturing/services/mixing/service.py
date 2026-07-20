@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone as dt_timezone
 from decimal import Decimal
 from typing import Any
 
 from django.utils import timezone
 
-from apps.manufacturing.services.mixing import MixingRules
 from services import db
 from services.base_service import ServiceError
 from services.converters import to_json_value
+from .rules import MixingRules
 
-
-class DatabaseMixingService(MixingRules):
+class MixingService(MixingRules):
     @classmethod
     def _normalize_session_date(cls, value: Any) -> str | None:
         """Convert supported date inputs to PostgreSQL's YYYY-MM-DD format.
@@ -605,5 +605,4 @@ class DatabaseMixingService(MixingRules):
         db.execute(db.client().table("mixings").delete().eq("id", item_id))
         return {"success": True}
 
-
-__all__ = ["DatabaseMixingService"]
+__all__ = ["MixingService"]

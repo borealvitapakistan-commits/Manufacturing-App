@@ -74,6 +74,12 @@ CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173",
 )
+CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", "")
+if DEBUG and not CORS_ALLOWED_ORIGIN_REGEXES:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^http://localhost:517[0-9]$",
+        r"^http://127\.0\.0\.1:517[0-9]$",
+    ]
 CORS_ALLOW_CREDENTIALS = False
 
 REST_FRAMEWORK = {

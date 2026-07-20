@@ -1,22 +1,22 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from apps.inventory.services.bottles_lids import BOTTLE_TYPES, CAPSULE_TYPES, BottleLidService
 from apps.inventory.services.labels import LabelService
-from apps.manufacturing.services.assembly import AssemblyRules
-from apps.manufacturing.services.njp_db import DatabaseNJPService
+from apps.manufacturing.services.njp import NJPService
 from services import db
 from services.base_service import ServiceError
 from services.converters import to_json_value
+from .rules import AssemblyRules
 
-
-class DatabaseAssemblyService(AssemblyRules):
+class AssemblyService(AssemblyRules):
     @classmethod
     def _find_njp(cls, njp_id: str) -> dict[str, Any]:
         try:
-            return DatabaseNJPService.get(njp_id)
+            return NJPService.get(njp_id)
         except ServiceError as error:
             if error.status_code == 404:
                 raise ServiceError(
@@ -867,5 +867,4 @@ class DatabaseAssemblyService(AssemblyRules):
         db.execute(db.client().table("assemblies").delete().eq("id", item_id))
         return {"success": True}
 
-
-__all__ = ["DatabaseAssemblyService"]
+__all__ = ["AssemblyService"]
