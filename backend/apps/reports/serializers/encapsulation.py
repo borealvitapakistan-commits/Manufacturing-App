@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 
-class NJPReportQuerySerializer(serializers.Serializer):
+class EncapsulationReportQuerySerializer(serializers.Serializer):
     brandId = serializers.CharField(required=False, allow_blank=True)
     productId = serializers.CharField(required=False, allow_blank=True)
     mixingId = serializers.CharField(required=False, allow_blank=True)
@@ -9,3 +9,8 @@ class NJPReportQuerySerializer(serializers.Serializer):
     fromDate = serializers.DateField(required=False)
     toDate = serializers.DateField(required=False)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=1000, default=500)
+
+
+NJPReportQuerySerializer = EncapsulationReportQuerySerializer
+
+__all__ = ["EncapsulationReportQuerySerializer", "NJPReportQuerySerializer"]

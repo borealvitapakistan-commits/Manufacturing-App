@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from apps.inventory.services.bottles_lids import BOTTLE_TYPES, CAPSULE_TYPES, BottleLidService
 from apps.inventory.services.labels import LabelService
-from apps.manufacturing.services.njp import NJPService
+from apps.manufacturing.services.encapsulation import EncapsulationService
 from services import db
 from services.base_service import ServiceError
 from services.converters import to_json_value
@@ -16,11 +15,11 @@ class AssemblyService(AssemblyRules):
     @classmethod
     def _find_njp(cls, njp_id: str) -> dict[str, Any]:
         try:
-            return NJPService.get(njp_id)
+            return EncapsulationService.get(njp_id)
         except ServiceError as error:
             if error.status_code == 404:
                 raise ServiceError(
-                    "Selected NJP record was not found. Save NJP first, then create Assembly from it.",
+                    "Selected Encapsulation record was not found. Save Encapsulation first, then create Assembly from it.",
                     404,
                 )
             raise
@@ -94,6 +93,28 @@ class AssemblyService(AssemblyRules):
         return by_assembly
 
     @classmethod
+    def _available_bottle_quantity(cls, brand_lots: list[dict[str, Any]]) -> int:
+        """Live remaining bottle count across this assembly's finished-goods lots.
+
+        total_bottles_made on the assemblies row is the fixed historical
+        production number (mirrors totalCapsulesFilledQty on Encapsulation) -
+        it never changes once produced. The live remaining stock lives in
+        inventory_balances against each brand lot's finished_good inventory
+        item, exactly like Encapsulation's availableCapsulesQty.
+        """
+        total = Decimal(0)
+        for lot in brand_lots:
+            item_id = lot.get("finished_good_inventory_item_id")
+            if not item_id:
+                continue
+            lot_id = lot.get("finished_good_lot_id")
+            total += db.get_inventory_quantity(
+                inventory_item_id=str(item_id),
+                inventory_lot_id=str(lot_id) if lot_id else None,
+            )
+        return int(total)
+
+    @classmethod
     def _db_to_app(
         cls,
         row: dict[str, Any],
@@ -104,6 +125,7 @@ class AssemblyService(AssemblyRules):
         assembly_id = str(row["id"])
         if brand_lots is None:
             brand_lots = cls._brand_lot_rows(assembly_id)
+        available_bottle_quantity = cls._available_bottle_quantity(brand_lots)
         brand_batch_codes: list[dict[str, Any]] = []
         for item in brand_lots:
             brand = item.get("brands") or {}
@@ -113,6 +135,7 @@ class AssemblyService(AssemblyRules):
                     "brandName": brand.get("name") or "",
                     "codePrefix": brand.get("code_prefix") or "",
                     "batchCode": item.get("batch_code") or "",
+                    "assemblyCode": item.get("assembly_code") or item.get("batch_code") or "",
                     "bottlesQty": item.get("bottles_qty") or 0,
                 }
             )
@@ -123,13 +146,23 @@ class AssemblyService(AssemblyRules):
             {
                 "id": assembly_id,
                 "assemblyCode": row.get("assembly_code") or "",
-                "batchCode": row.get("assembly_code") or "",
+                "batchCode": row.get("batch_code") or snapshot.get("batchCode") or "",
                 "brandBatchCodes": brand_batch_codes,
                 "batchCodeDisplay": cls._batch_code_display(
                     brand_batch_codes,
                     row.get("assembly_code") or "",
                 ),
-                "njpId": str(row["njp_id"]) if row.get("njp_id") else "",
+                "encapsulationId": (
+                    str(row["encapsulation_id"])
+                    if row.get("encapsulation_id")
+                    else ""
+                ),
+                "njpId": (
+                    str(row["encapsulation_id"])
+                    if row.get("encapsulation_id")
+                    else ""
+                ),
+                "productId": str(row["product_id"]) if row.get("product_id") else (snapshot.get("productId") or ""),
                 "location": row.get("location_text") or snapshot.get("location") or "",
                 "rackNo": row.get("location_text") or snapshot.get("rackNo") or "",
                 "boxNo": row.get("box_number") or snapshot.get("boxNo") or "",
@@ -141,16 +174,46 @@ class AssemblyService(AssemblyRules):
                 "capsuleWeight": db.as_float(row.get("capsule_weight_mg")),
                 "capsuleWeightMg": db.as_float(row.get("capsule_weight_mg")),
                 "capsulesReceivedQty": int(db.as_decimal(row.get("capsules_received_qty"))),
+                "totalUnitsUsed": int(db.as_decimal(row.get("capsules_received_qty"))),
                 "capsulesReceivedKg": db.as_float(row.get("capsules_received_kg")),
                 "capsulesPerBottle": int(row.get("capsules_per_bottle") or 0),
+                "unitsPerBottle": int(row.get("capsules_per_bottle") or 0),
                 "totalBottlesMade": int(row.get("total_bottles_made") or 0),
+                "bottleQuantity": int(row.get("total_bottles_made") or 0),
+                "availableBottleQuantity": available_bottle_quantity,
+                "remainingBottleQuantity": available_bottle_quantity,
+                "availableUnitsQty": available_bottle_quantity * int(row.get("capsules_per_bottle") or 0),
+                "remainingUnitsQty": available_bottle_quantity * int(row.get("capsules_per_bottle") or 0),
                 "totalLabelsUsed": int(row.get("total_labels_used") or 0),
+                "filledBottleWeight": db.as_float(row.get("filled_bottle_weight"))
+                if row.get("filled_bottle_weight") is not None
+                else None,
+                "weightUnit": row.get("weight_unit") or "g",
                 "labelId": str(row.get("label_id")) if row.get("label_id") else (snapshot.get("labelId") or ""),
+                "bottleLidId": (
+                    str(row.get("bottle_lid_id"))
+                    if row.get("bottle_lid_id")
+                    else (snapshot.get("bottleLidId") or "")
+                ),
                 "looseCapsulesQty": int(db.as_decimal(row.get("remaining_capsules_qty"))),
                 "remainingCapsulesQty": int(db.as_decimal(row.get("remaining_capsules_qty"))),
                 "remainingCapsulesAfterBottlingQty": int(db.as_decimal(row.get("remaining_capsules_qty"))),
                 "productionDate": row.get("production_date") or snapshot.get("productionDate"),
                 "expiryDate": row.get("expiry_date") or snapshot.get("expiryDate"),
+                "qualityControlDate": row.get("quality_control_date") or snapshot.get("qualityControlDate"),
+                "qcDate": row.get("quality_control_date") or snapshot.get("qcDate"),
+                "qualityControlStartTime": (
+                    row.get("quality_control_start_time") or snapshot.get("qualityControlStartTime")
+                ),
+                "qcStartTime": row.get("quality_control_start_time") or snapshot.get("qcStartTime"),
+                "qualityControlEndTime": (
+                    row.get("quality_control_end_time") or snapshot.get("qualityControlEndTime")
+                ),
+                "qcEndTime": row.get("quality_control_end_time") or snapshot.get("qcEndTime"),
+                "packagingDate": row.get("packaging_date") or snapshot.get("packagingDate"),
+                "packageDate": row.get("packaging_date") or snapshot.get("packageDate"),
+                "packagingStartTime": row.get("packaging_start_time") or snapshot.get("packagingStartTime"),
+                "packagingEndTime": row.get("packaging_end_time") or snapshot.get("packagingEndTime"),
                 "status": cls.STATUS_MAP.get(
                     str(row.get("status") or "").lower(),
                     row.get("status") or "",
@@ -201,7 +264,11 @@ class AssemblyService(AssemblyRules):
         if product_id:
             records = [record for record in records if str(record.get("productId")) == str(product_id)]
         if njp_id:
-            records = [record for record in records if str(record.get("njpId")) == str(njp_id)]
+            records = [
+                record
+                for record in records
+                if str(record.get("encapsulationId") or record.get("njpId")) == str(njp_id)
+            ]
         if search:
             query = str(search).strip().lower()
             records = [
@@ -234,75 +301,14 @@ class AssemblyService(AssemblyRules):
             return "completed"
         return "underprocess"
 
-    @classmethod
-    def _next_db_brand_code(cls, brand_id: str) -> str:
-        response = db.execute(db.client().rpc("next_brand_batch_code", {"p_brand_id": brand_id}))
+    @staticmethod
+    def _rpc_scalar(response: Any) -> Any:
         result = response.data
-        if isinstance(result, str):
-            return result
         if isinstance(result, list) and result:
-            return str(result[0])
+            result = result[0]
         if isinstance(result, dict):
-            return str(next(iter(result.values())))
-        raise ServiceError("Could not generate brand batch code.", 500)
-
-    @classmethod
-    def _assign_brand_batch_codes(
-        cls,
-        record: dict[str, Any],
-        *,
-        previous: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        previous_codes = cls._existing_brand_batch_codes(previous or {})
-        brand_batch_codes: list[dict[str, Any]] = []
-        for brand_ref in record.get("brands") or []:
-            brand_id = cls._as_text(brand_ref.get("id") or brand_ref.get("brandId"))
-            if not brand_id:
-                continue
-            brand_lookup = cls._brand_lookup({"id": brand_id})
-            brand_name = brand_ref.get("name") or brand_ref.get("brandName") or brand_lookup.get("name") or ""
-            code_prefix = (
-                brand_ref.get("codePrefix")
-                or brand_ref.get("code_prefix")
-                or brand_lookup.get("codePrefix")
-                or ""
-            )
-            key = brand_id or cls._as_text(brand_name).lower()
-            batch_code = previous_codes.get(key) or cls._next_db_brand_code(brand_id)
-            brand_batch_codes.append(
-                {
-                    "brandId": brand_id,
-                    "brandName": brand_name,
-                    "codePrefix": code_prefix,
-                    "batchCode": batch_code,
-                    "bottlesQty": int(record.get("totalBottlesMade") or 0),
-                }
-            )
-
-        if not brand_batch_codes:
-            raise ServiceError("At least one brand is required to create Assembly batch code.", 400)
-
-        record = {
-            **record,
-            "brandBatchCodes": brand_batch_codes,
-            "assemblyCode": brand_batch_codes[0]["batchCode"],
-            "batchCode": brand_batch_codes[0]["batchCode"],
-            "batchCodeDisplay": cls._batch_code_display(
-                brand_batch_codes,
-                brand_batch_codes[0]["batchCode"],
-            ),
-            "brandId": brand_batch_codes[0]["brandId"],
-            "brandName": brand_batch_codes[0]["brandName"],
-            "brandIds": [item["brandId"] for item in brand_batch_codes if item.get("brandId")],
-            "brandNames": [item["brandName"] for item in brand_batch_codes if item.get("brandName")],
-            "isMultiBrand": len(brand_batch_codes) > 1,
-        }
-        record["capsuleData"] = {
-            **(record.get("capsuleData") or {}),
-            "brandBatchCodes": brand_batch_codes,
-            "batchCodeDisplay": record["batchCodeDisplay"],
-        }
-        return record
+            result = next(iter(result.values()), None)
+        return result
 
     @classmethod
     def _resolve_bottle_lid(
@@ -393,13 +399,13 @@ class AssemblyService(AssemblyRules):
             db.one(
                 db.execute(
                     db.client()
-                    .table("njp_runs")
+                    .table("encapsulations")
                     .select("*")
                     .eq("id", njp_id)
                     .limit(1)
                 )
             ),
-            "Selected NJP record was not found.",
+            "Selected Encapsulation record was not found.",
             400,
         )
 
@@ -416,14 +422,14 @@ class AssemblyService(AssemblyRules):
         source = cls._njp_row(njp_id)
         item_id = source.get("output_capsule_inventory_item_id")
         if not item_id:
-            raise ServiceError("Selected NJP has no available capsule inventory.", 400)
+            raise ServiceError("Selected Encapsulation has no available capsule inventory.", 400)
         available = db.get_inventory_quantity(inventory_item_id=str(item_id))
         previous_njp_id, previous_used_qty = cls._assembly_usage(previous or {})
         if previous_njp_id == njp_id:
             available += Decimal(previous_used_qty)
         if Decimal(used_qty) > available:
             raise ServiceError(
-                f"NJP capsules are not enough. Available: {int(available)}, required: {used_qty}.",
+                f"Encapsulation capsules are not enough. Available: {int(available)}, required: {used_qty}.",
                 400,
             )
 
@@ -482,389 +488,119 @@ class AssemblyService(AssemblyRules):
             )
 
     @classmethod
-    def _consume_njp(cls, record: dict[str, Any], *, entity_id: str) -> str | None:
-        njp_id, used_qty = cls._assembly_usage(record)
-        source = cls._njp_row(njp_id)
-        item_id = source.get("output_capsule_inventory_item_id")
-        if not item_id:
-            raise ServiceError("Selected NJP has no available capsule inventory.", 400)
-        db.consume_inventory_quantity(
-            inventory_item_id=str(item_id),
-            quantity=used_qty,
-            related_entity_type="assembly",
-            related_entity_id=entity_id,
-            reason=f"Capsules used in {record.get('assemblyCode') or 'Assembly'}",
-            metadata={"njpId": njp_id, "njpCode": record.get("njpCode")},
-        )
-        return str(source.get("output_capsule_lot_id") or "") or None
+    def _resolved_payload_for_rpc(cls, cleaned: dict[str, Any]) -> dict[str, Any]:
+        """Build the plan passed to the save_assembly() database function.
 
-    @classmethod
-    def _restore_njp(cls, record: dict[str, Any], *, entity_id: str) -> None:
-        njp_id, used_qty = cls._assembly_usage(record)
-        if not njp_id or used_qty <= 0:
-            return
-        source = cls._njp_row(njp_id)
-        item_id = source.get("output_capsule_inventory_item_id")
-        if not item_id:
-            return
-        db.inventory_movement(
-            inventory_item_id=str(item_id),
-            inventory_lot_id=(
-                str(source["output_capsule_lot_id"])
-                if source.get("output_capsule_lot_id")
-                else None
-            ),
-            quantity_delta=used_qty,
-            movement_type="adjust",
-            related_entity_type="assembly",
-            related_entity_id=entity_id,
-            reason="Assembly edit/delete restored NJP capsules",
-            metadata={"njpId": njp_id, "assemblyCode": record.get("assemblyCode")},
-        )
-
-    @classmethod
-    def _consume_bottle_lids(cls, record: dict[str, Any], *, entity_id: str) -> str | None:
-        bottle_lid_id, used_qty = cls._bottle_lid_usage(record)
-        if not bottle_lid_id or used_qty <= 0:
-            return None
-        db.consume_inventory_quantity(
-            inventory_item_id=bottle_lid_id,
-            quantity=used_qty,
-            related_entity_type="assembly",
-            related_entity_id=entity_id,
-            reason=f"Bottles used in {record.get('assemblyCode') or 'Assembly'}",
-            metadata={
-                "assemblyCode": record.get("assemblyCode"),
-                "bottleType": record.get("bottleType"),
-                "bottleSize": record.get("bottleSize"),
-            },
-        )
-        return db.latest_lot_id(bottle_lid_id)
-
-    @classmethod
-    def _restore_bottle_lids(cls, record: dict[str, Any], *, entity_id: str) -> None:
-        bottle_lid_id, used_qty = cls._bottle_lid_usage(record)
-        if not bottle_lid_id or used_qty <= 0:
-            return
-        db.inventory_movement(
-            inventory_item_id=bottle_lid_id,
-            quantity_delta=used_qty,
-            movement_type="adjust",
-            related_entity_type="assembly",
-            related_entity_id=entity_id,
-            reason="Assembly edit/delete restored bottle inventory",
-            metadata={
-                "assemblyCode": record.get("assemblyCode"),
-                "bottleType": record.get("bottleType"),
-                "bottleSize": record.get("bottleSize"),
-            },
-        )
-
-    @classmethod
-    def _consume_labels(cls, record: dict[str, Any], *, entity_id: str) -> str | None:
-        label_id, used_qty = cls._label_usage(record)
-        if not label_id or used_qty <= 0:
-            return None
-        db.consume_inventory_quantity(
-            inventory_item_id=label_id,
-            quantity=used_qty,
-            related_entity_type="assembly",
-            related_entity_id=entity_id,
-            reason=f"Labels used in {record.get('assemblyCode') or 'Assembly'}",
-            metadata={"assemblyCode": record.get("assemblyCode")},
-        )
-        return db.latest_lot_id(label_id)
-
-    @classmethod
-    def _restore_labels(cls, record: dict[str, Any], *, entity_id: str) -> None:
-        label_id, used_qty = cls._label_usage(record)
-        if not label_id or used_qty <= 0:
-            return
-        db.inventory_movement(
-            inventory_item_id=label_id,
-            quantity_delta=used_qty,
-            movement_type="adjust",
-            related_entity_type="assembly",
-            related_entity_id=entity_id,
-            reason="Assembly edit/delete restored label inventory",
-            metadata={"assemblyCode": record.get("assemblyCode")},
-        )
-
-    @classmethod
-    def _insert_children(cls, assembly_id: str, record: dict[str, Any]) -> None:
-        db.execute(db.client().table("assembly_sessions").delete().eq("assembly_id", assembly_id))
-        db.execute(db.client().table("assembly_brands").delete().eq("assembly_id", assembly_id))
-        db.execute(db.client().table("assembly_brand_lots").delete().eq("assembly_id", assembly_id))
-
-        brand_rows = []
-        for index, item in enumerate(record.get("brandBatchCodes") or [], start=1):
-            brand_id = item.get("brandId")
-            if not brand_id:
-                continue
-            brand_rows.append(
-                {
-                    "assembly_id": assembly_id,
-                    "brand_id": brand_id,
-                    "is_primary": index == 1,
-                }
-            )
-        if brand_rows:
-            db.execute(db.client().table("assembly_brands").insert(brand_rows))
-
-        location_id = db.ensure_location(record.get("location"))
-        lot_rows = []
-        for item in record.get("brandBatchCodes") or []:
-            brand_id = item.get("brandId")
-            batch_code = item.get("batchCode")
-            if not brand_id or not batch_code:
-                continue
-            product_name = record.get("productName") or "Finished goods"
-            inventory_item = db.create_inventory_item(
-                item_kind="finished_good",
-                item_code=str(batch_code),
-                item_name=f"{product_name} bottles",
-                unit_of_measure="each",
-                metadata={
-                    "assemblyId": assembly_id,
-                    "batchCode": batch_code,
-                    "brandId": brand_id,
-                },
-            )
-            inventory_item_id = str(inventory_item["id"])
-            lot = db.create_lot(
-                inventory_item_id=inventory_item_id,
-                lot_code=str(batch_code),
-                location_id=location_id,
-                manufacture_date=db.date_from_ms(record.get("productionDate")),
-                expiry_date=db.date_from_ms(record.get("expiryDate")),
-                source_document_type="assembly",
-                source_document_id=assembly_id,
-                metadata={
-                    "assemblyId": assembly_id,
-                    "batchCode": batch_code,
-                    "brandId": brand_id,
-                },
-            )
-            lot_id = str(lot["id"]) if lot else None
-            bottles_qty = int(item.get("bottlesQty") or record.get("totalBottlesMade") or 0)
-            if bottles_qty > 0:
-                db.inventory_movement(
-                    inventory_item_id=inventory_item_id,
-                    inventory_lot_id=lot_id,
-                    location_id=location_id,
-                    quantity_delta=bottles_qty,
-                    movement_type="produce",
-                    related_entity_type="assembly",
-                    related_entity_id=assembly_id,
-                    reason="Assembly produced finished goods",
-                    metadata={"batchCode": batch_code},
-                )
-            lot_rows.append(
-                {
-                    "assembly_id": assembly_id,
-                    "brand_id": brand_id,
-                    "finished_good_inventory_item_id": inventory_item_id,
-                    "finished_good_lot_id": lot_id,
-                    "batch_code": batch_code,
-                    "bottles_qty": bottles_qty,
-                    "comments": record.get("comments"),
-                }
-            )
-        if lot_rows:
-            db.execute(db.client().table("assembly_brand_lots").insert(lot_rows))
-
-        session_rows = []
-        for index, row in enumerate(record.get("assemblySessions") or [], start=1):
+        All business-rule resolution (which Encapsulation/bottle-lid/label
+        records to use, brand refs, numeric derivation, user-facing
+        validation) already happened in _clean_payload(). This only shapes
+        that result into the JSON contract save_assembly() expects - the
+        function performs the entire write phase (code assignment, row
+        insert/update, inventory consumption/production, child rows) as one
+        atomic transaction. See supabase/migrations-2/014_....sql.
+        """
+        sessions = []
+        for row in cleaned.get("assemblySessions") or []:
             session_date = db.date_from_ms(row.get("date") or row.get("sessionDate") or row.get("startDate"))
             if not session_date:
                 continue
-            session_rows.append(
+            sessions.append(
                 {
-                    "assembly_id": assembly_id,
-                    "session_date": session_date,
-                    "start_time": row.get("startTime") or None,
-                    "end_time": row.get("endTime") or None,
+                    "date": session_date,
+                    "startTime": row.get("startTime") or None,
+                    "endTime": row.get("endTime") or None,
                     "remarks": row.get("remarks") or row.get("dayRemarks"),
-                    "sort_order": index,
                 }
             )
-        if session_rows:
-            db.execute(db.client().table("assembly_sessions").insert(session_rows))
 
-    @classmethod
-    def _reverse_finished_goods(cls, row: dict[str, Any]) -> None:
-        assembly_id = str(row["id"])
-        for lot in cls._brand_lot_rows(assembly_id):
-            item_id = lot.get("finished_good_inventory_item_id")
-            if not item_id:
-                continue
-            lot_id = str(lot["finished_good_lot_id"]) if lot.get("finished_good_lot_id") else None
-            qty = db.as_decimal(lot.get("bottles_qty"))
-            available = db.get_inventory_quantity(inventory_item_id=str(item_id), inventory_lot_id=lot_id)
-            if qty > available:
-                raise ServiceError(
-                    "Cannot edit or delete this Assembly because finished goods have already been consumed from it.",
-                    409,
-                )
-            db.inventory_movement(
-                inventory_item_id=str(item_id),
-                inventory_lot_id=lot_id,
-                quantity_delta=-qty,
-                movement_type="adjust",
-                related_entity_type="assembly",
-                related_entity_id=assembly_id,
-                reason="Assembly edit/delete reversed finished goods output",
-                metadata={"batchCode": lot.get("batch_code")},
-            )
+        return {
+            "encapsulationId": cleaned.get("encapsulationId") or cleaned.get("njpId"),
+            "batchCode": cleaned.get("batchCode"),
+            "brands": [
+                {
+                    "id": brand.get("id") or brand.get("brandId"),
+                    "name": brand.get("name") or brand.get("brandName"),
+                    "codePrefix": brand.get("codePrefix") or brand.get("code_prefix"),
+                }
+                for brand in (cleaned.get("brands") or [])
+                if brand.get("id") or brand.get("brandId")
+            ],
+            "productId": cleaned.get("productId") or None,
+            "productName": cleaned.get("productName"),
+            "location": cleaned.get("location"),
+            "boxNo": cleaned.get("boxNo"),
+            "bottleType": cleaned.get("bottleType") or "capsule",
+            "bottleSize": cleaned.get("bottleSize") or None,
+            "bottleCC": (
+                db.decimal_str(cleaned.get("bottleCC")) if cleaned.get("bottleCC") is not None else None
+            ),
+            "capsuleWeightMg": db.decimal_str(cleaned.get("capsuleWeightMg")),
+            "capsulesPerBottle": cleaned.get("capsulesPerBottle"),
+            "bottleQuantity": cleaned.get("bottleQuantity"),
+            "totalUnitsUsed": cleaned.get("totalUnitsUsed"),
+            "capsulesReceivedKg": db.decimal_str(cleaned.get("capsulesReceivedKg")),
+            "bottleLidId": cleaned.get("bottleLidId") or None,
+            "labelId": cleaned.get("labelId") or None,
+            "totalLabelsUsed": cleaned.get("totalLabelsUsed"),
+            "filledBottleWeight": (
+                db.decimal_str(cleaned.get("filledBottleWeight"))
+                if cleaned.get("filledBottleWeight") is not None
+                else None
+            ),
+            "weightUnit": cleaned.get("weightUnit") or "g",
+            "productionDate": db.date_from_ms(cleaned.get("productionDate")),
+            "expiryDate": db.date_from_ms(cleaned.get("expiryDate")),
+            "status": cls._status_db(cleaned),
+            "operatorName": cleaned.get("operatorName"),
+            "comments": cleaned.get("comments"),
+            "qualityControlDate": cleaned.get("qualityControlDate") or None,
+            "qualityControlStartTime": cleaned.get("qualityControlStartTime") or None,
+            "qualityControlEndTime": cleaned.get("qualityControlEndTime") or None,
+            "packagingDate": cleaned.get("packagingDate") or None,
+            "packagingStartTime": cleaned.get("packagingStartTime") or None,
+            "packagingEndTime": cleaned.get("packagingEndTime") or None,
+            "assemblySessions": sessions,
+            "recordSnapshot": to_json_value(cleaned),
+        }
 
     @classmethod
     def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        records = cls.list(limit=2000)
-        cleaned = cls._clean_payload(payload, records=records)
-        cleaned = cls._assign_brand_batch_codes(cleaned)
+        cleaned = cls._clean_payload(payload)
         cls._validate_njp_inventory(cleaned)
         cls._validate_bottle_inventory(cleaned)
         cls._validate_label_inventory(cleaned)
 
-        location_id = db.ensure_location(cleaned.get("location"))
-        bottle_type = cleaned.get("bottleType") or "capsule"
-        bottle_size = int(cleaned.get("bottleSize")) if bottle_type == "capsule" else None
-        created = db.require_row(
-            db.one(
-                db.execute(
-                    db.client()
-                    .table("assemblies")
-                    .insert(
-                        {
-                            "assembly_code": cleaned.get("assemblyCode"),
-                            "njp_id": cleaned.get("njpId"),
-                            "location_id": location_id,
-                            "location_text": cleaned.get("location"),
-                            "box_number": cleaned.get("boxNo"),
-                            "bottle_type": bottle_type,
-                            "bottle_size": bottle_size,
-                            "capsule_weight_mg": db.decimal_str(cleaned.get("capsuleWeightMg")),
-                            "capsules_received_qty": db.decimal_str(cleaned.get("capsulesReceivedQty")),
-                            "capsules_received_kg": db.decimal_str(cleaned.get("capsulesReceivedKg")),
-                            "capsules_per_bottle": int(cleaned.get("capsulesPerBottle") or 0),
-                            "total_bottles_made": int(cleaned.get("totalBottlesMade") or 0),
-                            "total_labels_used": int(cleaned.get("totalLabelsUsed") or 0),
-                            "remaining_capsules_qty": db.decimal_str(
-                                cleaned.get("remainingCapsulesAfterBottlingQty")
-                                or cleaned.get("looseCapsulesQty")
-                                or 0
-                            ),
-                            "bottle_cc": str(cleaned.get("bottleCC") or "") or None,
-                            "filled_bottle_weight": str(cleaned.get("filledBottleWeight") or "") or None,
-                            "production_date": db.date_from_ms(cleaned.get("productionDate")),
-                            "expiry_date": db.date_from_ms(cleaned.get("expiryDate")),
-                            "status": cls._status_db(cleaned),
-                            "operator_name": cleaned.get("operatorName"),
-                            "comments": cleaned.get("comments"),
-                            "record_snapshot": to_json_value(cleaned),
-                        }
-                    )
-                )
-            ),
-            "Assembly was not saved",
-            500,
-        )
-        assembly_id = str(created["id"])
-        record = {**cleaned, "id": assembly_id}
-        input_lot_id = cls._consume_njp(record, entity_id=assembly_id)
-        packaging_lot_id = cls._consume_bottle_lids(record, entity_id=assembly_id)
-        label_lot_id = cls._consume_labels(record, entity_id=assembly_id)
-        db.execute(
-            db.client()
-            .table("assemblies")
-            .update(
-                {
-                    "input_capsule_lot_id": input_lot_id,
-                    "packaging_lot_id": packaging_lot_id,
-                    "label_id": record.get("labelId") or None,
-                    "label_lot_id": label_lot_id,
-                    "record_snapshot": to_json_value(record),
-                }
+        response = db.execute(
+            db.client().rpc(
+                "save_assembly",
+                {"p_assembly_id": None, "p_payload": cls._resolved_payload_for_rpc(cleaned)},
             )
-            .eq("id", assembly_id)
         )
-        cls._insert_children(assembly_id, record)
-        return cls.get(assembly_id)
+        assembly_id = cls._rpc_scalar(response)
+        if not assembly_id:
+            raise ServiceError("Assembly was not saved", 500)
+        return cls.get(str(assembly_id))
 
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         row = db.require_row(cls._row_by_id(item_id), "Assembly record not found")
         previous = cls._db_to_app(row)
-        records = cls.list(limit=2000)
-        cleaned = cls._clean_payload(payload, existing=previous, records=records)
-        cleaned = cls._assign_brand_batch_codes(cleaned, previous=previous)
+        cleaned = cls._clean_payload(payload, existing=previous)
         cls._validate_njp_inventory(cleaned, previous=previous)
         cls._validate_bottle_inventory(cleaned, previous=previous)
         cls._validate_label_inventory(cleaned, previous=previous)
-        cls._reverse_finished_goods(row)
-        cls._restore_njp(previous, entity_id=item_id)
-        cls._restore_bottle_lids(previous, entity_id=item_id)
-        cls._restore_labels(previous, entity_id=item_id)
 
-        record = {**cleaned, "id": item_id}
-        input_lot_id = cls._consume_njp(record, entity_id=item_id)
-        packaging_lot_id = cls._consume_bottle_lids(record, entity_id=item_id)
-        label_lot_id = cls._consume_labels(record, entity_id=item_id)
-        location_id = db.ensure_location(record.get("location"))
-        bottle_type = record.get("bottleType") or "capsule"
-        bottle_size = int(record.get("bottleSize")) if bottle_type == "capsule" else None
         db.execute(
-            db.client()
-            .table("assemblies")
-            .update(
-                {
-                    "assembly_code": record.get("assemblyCode"),
-                    "njp_id": record.get("njpId"),
-                    "input_capsule_lot_id": input_lot_id,
-                    "packaging_lot_id": packaging_lot_id,
-                    "label_id": record.get("labelId") or None,
-                    "label_lot_id": label_lot_id,
-                    "location_id": location_id,
-                    "location_text": record.get("location"),
-                    "box_number": record.get("boxNo"),
-                    "bottle_type": bottle_type,
-                    "bottle_size": bottle_size,
-                    "capsule_weight_mg": db.decimal_str(record.get("capsuleWeightMg")),
-                    "capsules_received_qty": db.decimal_str(record.get("capsulesReceivedQty")),
-                    "capsules_received_kg": db.decimal_str(record.get("capsulesReceivedKg")),
-                    "capsules_per_bottle": int(record.get("capsulesPerBottle") or 0),
-                    "total_bottles_made": int(record.get("totalBottlesMade") or 0),
-                    "total_labels_used": int(record.get("totalLabelsUsed") or 0),
-                    "remaining_capsules_qty": db.decimal_str(
-                        record.get("remainingCapsulesAfterBottlingQty")
-                        or record.get("looseCapsulesQty")
-                        or 0
-                    ),
-                    "bottle_cc": str(record.get("bottleCC") or "") or None,
-                    "filled_bottle_weight": str(record.get("filledBottleWeight") or "") or None,
-                    "production_date": db.date_from_ms(record.get("productionDate")),
-                    "expiry_date": db.date_from_ms(record.get("expiryDate")),
-                    "status": cls._status_db(record),
-                    "operator_name": record.get("operatorName"),
-                    "comments": record.get("comments"),
-                    "version": int(row.get("version") or 1) + 1,
-                    "record_snapshot": to_json_value(record),
-                }
+            db.client().rpc(
+                "save_assembly",
+                {"p_assembly_id": item_id, "p_payload": cls._resolved_payload_for_rpc(cleaned)},
             )
-            .eq("id", item_id)
         )
-        cls._insert_children(item_id, record)
         return cls.get(item_id)
 
     @classmethod
     def delete(cls, item_id: str) -> dict[str, Any]:
-        row = db.require_row(cls._row_by_id(item_id), "Assembly record not found")
-        previous = cls._db_to_app(row)
-        cls._reverse_finished_goods(row)
-        cls._restore_njp(previous, entity_id=item_id)
-        cls._restore_bottle_lids(previous, entity_id=item_id)
-        cls._restore_labels(previous, entity_id=item_id)
-        db.execute(db.client().table("assemblies").delete().eq("id", item_id))
+        db.execute(db.client().rpc("delete_assembly", {"p_assembly_id": item_id}))
         return {"success": True}
 
 __all__ = ["AssemblyService"]

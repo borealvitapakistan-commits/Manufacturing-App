@@ -10,6 +10,7 @@ from .views import (
     LabelDetailView,
     LabelListCreateView,
     LabelValidationView,
+    InventoryRecordListView,
     LowStockView,
     ManualAdjustmentView,
     RawMaterialByCodeView,
@@ -24,6 +25,7 @@ from .views import (
 urlpatterns = [
     path("", FinishedGoodsListCreateView.as_view(), name="finished-goods-list-create"),
     path("history/", InventoryHistoryView.as_view(), name="inventory-history"),
+    path("records/<str:record_type>/", InventoryRecordListView.as_view(), name="inventory-record-list"),
     path("manual-adjustment/", ManualAdjustmentView.as_view(), name="inventory-manual-adjustment"),
     path("labels/", LabelListCreateView.as_view(), name="inventory-label-list-create"),
     path("labels/validate/", LabelValidationView.as_view(), name="inventory-label-validate"),

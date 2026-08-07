@@ -3,6 +3,8 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 from rest_framework.test import APIClient
 
+from apps.manufacturing.services.mixing.rules import MixingRules
+
 
 class MixingAPITests(SimpleTestCase):
     def setUp(self):
@@ -13,7 +15,7 @@ class MixingAPITests(SimpleTestCase):
         mocked_list.return_value = [{"id": "mix-1", "mixingCode": "MIX-0001"}]
 
         response = self.client.get(
-            "/api/mixing/",
+            "/api/manufacturing/mixing/",
             {"brandId": "brand-1", "productId": "product-1", "search": "ash"},
         )
 
@@ -30,7 +32,7 @@ class MixingAPITests(SimpleTestCase):
         mocked_create.return_value = {"id": "mix-1", "mixingCode": "MIX-0001"}
 
         response = self.client.post(
-            "/api/mixing/",
+            "/api/manufacturing/mixing/",
             {
                 "brandId": "brand-1",
                 "productId": "product-1",
@@ -43,3 +45,41 @@ class MixingAPITests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["data"]["mixingCode"], "MIX-0001")
         mocked_create.assert_called_once()
+
+
+class MixingCodeRulesTests(SimpleTestCase):
+    def test_product_mixing_code_uses_product_prefix_and_global_sequence(self):
+        products = [
+            {"id": "ber", "productName": "Berberine"},
+            {"id": "cit", "productName": "Magnesium Citrate"},
+            {"id": "gly", "productName": "Magnesium Gyemate"},
+        ]
+        records = [
+            {"mixingCode": "M-BER-001"},
+            {"mixingCode": "M-MAC-002"},
+        ]
+
+        self.assertEqual(
+            MixingRules._next_code(
+                records,
+                product={"id": "ber", "productName": "Berberine"},
+                products=products,
+            ),
+            "M-BER-003",
+        )
+        self.assertEqual(
+            MixingRules._format_mixing_code(
+                product={"id": "cit", "productName": "Magnesium Citrate"},
+                number=4,
+                products=products,
+            ),
+            "M-MAC-004",
+        )
+        self.assertEqual(
+            MixingRules._format_mixing_code(
+                product={"id": "gly", "productName": "Magnesium Gyemate"},
+                number=5,
+                products=products,
+            ),
+            "M-MAG-005",
+        )

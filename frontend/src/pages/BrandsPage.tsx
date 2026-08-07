@@ -36,6 +36,8 @@ interface FormState {
   name: string
   codePrefix: string
   shortName: string
+  contactName: string
+  contactEmail: string
   addressLine1: string
   addressLine2: string
   city: string
@@ -54,6 +56,8 @@ const defaultForm: FormState = {
   name: '',
   codePrefix: '',
   shortName: '',
+  contactName: '',
+  contactEmail: '',
   addressLine1: '',
   addressLine2: '',
   city: '',
@@ -125,6 +129,8 @@ export default function BrandsPage() {
         name: form.name.trim(),
         codePrefix: form.codePrefix.trim(),
         shortName: form.shortName.trim() || null,
+        contactName: form.contactName.trim() || null,
+        contactEmail: form.contactEmail.trim() || null,
         addressLine1: form.addressLine1.trim() || null,
         addressLine2: form.addressLine2.trim() || null,
         city: form.city.trim() || null,
@@ -179,6 +185,8 @@ export default function BrandsPage() {
       name: brand.name || '',
       codePrefix: brand.codePrefix || '',
       shortName: brand.shortName || '',
+      contactName: brand.contactName || '',
+      contactEmail: brand.contactEmail || '',
       addressLine1: brand.addressLine1 || '',
       addressLine2: brand.addressLine2 || '',
       city: brand.city || '',
@@ -332,7 +340,24 @@ export default function BrandsPage() {
             />
           </div>
           <div>
-            <Label>Phone</Label>
+            <Label>Contact Name</Label>
+            <Input
+              value={form.contactName}
+              onChange={e => setForm({ ...form, contactName: e.target.value })}
+              placeholder="e.g., Purchase Manager"
+            />
+          </div>
+          <div>
+            <Label>Contact Email</Label>
+            <Input
+              type="email"
+              value={form.contactEmail}
+              onChange={e => setForm({ ...form, contactEmail: e.target.value })}
+              placeholder="e.g., purchasing@example.com"
+            />
+          </div>
+          <div>
+            <Label>Contact Phone</Label>
             <Input
               value={form.phone}
               onChange={e => setForm({ ...form, phone: e.target.value })}
@@ -458,10 +483,11 @@ export default function BrandsPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Code Prefix</TableHead>
+              <TableHead>Short Name</TableHead>
+              <TableHead>Contact</TableHead>
+              <TableHead>Address</TableHead>
               <TableHead>Color</TableHead>
               <TableHead>Logo</TableHead>
-              <TableHead>Short Name</TableHead>
-              <TableHead>PO Info</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
               <TableHead>Actions</TableHead>
@@ -469,14 +495,37 @@ export default function BrandsPage() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoading colSpan={9} />
+              <TableLoading colSpan={10} />
             ) : brands.length === 0 ? (
-              <TableEmpty colSpan={9} message="No brands found. Add your first brand." />
+              <TableEmpty colSpan={10} message="No brands found. Add your first brand." />
             ) : (
               brands.map(brand => (
                 <TableRow key={brand.id}>
                   <TableCell className="font-medium">{brand.name}</TableCell>
                   <TableCell className="font-mono">{brand.codePrefix}</TableCell>
+                  <TableCell>{brand.shortName || '-'}</TableCell>
+                  <TableCell>
+                    {brand.contactName || brand.contactEmail || brand.phone ? (
+                      <div className="max-w-[220px] text-xs leading-relaxed text-zinc-600">
+                        {brand.contactName && <div className="font-medium text-zinc-800">{brand.contactName}</div>}
+                        {brand.contactEmail && <div>{brand.contactEmail}</div>}
+                        {brand.phone && <div>{brand.phone}</div>}
+                      </div>
+                    ) : (
+                      <span className="text-zinc-400">No contact</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {brand.addressLine1 || brand.addressLine2 || brand.city || brand.province || brand.country ? (
+                      <div className="max-w-[260px] text-xs leading-relaxed text-zinc-600">
+                        <div className="font-medium text-zinc-800">{brand.addressLine1 || 'No street address'}</div>
+                        {brand.addressLine2 && <div>{brand.addressLine2}</div>}
+                        <div>{[brand.city, brand.province, brand.country].filter(Boolean).join(', ')}</div>
+                      </div>
+                    ) : (
+                      <span className="text-zinc-400">No address</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <div className="h-5 w-5 rounded-full border border-zinc-200" style={{ backgroundColor: brand.color || '#16a34a' }} />
@@ -488,18 +537,6 @@ export default function BrandsPage() {
                       <img src={brand.logoUrl} alt={`${brand.name} logo`} className="h-8 max-w-[96px] object-contain" />
                     ) : (
                       <span className="text-zinc-400">No logo</span>
-                    )}
-                  </TableCell>
-                  <TableCell>{brand.shortName || '-'}</TableCell>
-                  <TableCell>
-                    {brand.addressLine1 || brand.city || brand.province || brand.country || brand.phone ? (
-                      <div className="max-w-[220px] text-xs leading-relaxed text-zinc-600">
-                        <div className="font-medium text-zinc-800">{brand.addressLine1 || 'No street address'}</div>
-                        <div>{[brand.city, brand.province, brand.country].filter(Boolean).join(', ')}</div>
-                        {brand.phone && <div>{brand.phone}</div>}
-                      </div>
-                    ) : (
-                      <span className="text-zinc-400">No PO info</span>
                     )}
                   </TableCell>
                   <TableCell>

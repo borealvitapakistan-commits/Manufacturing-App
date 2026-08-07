@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Badge,
@@ -28,12 +28,9 @@ import {
 import {
   deleteLocalAssembly,
   deleteLocalMixing,
-  deleteLocalNJP,
+  deleteLocalEncapsulation,
+  fetchFinishedGoods,
   fetchFinishedGoodHistory,
-  fetchLocalAssemblies,
-  fetchLocalMixings,
-  fetchLocalNJPs,
-  initSupabase,
   saveFinishedGood
 } from '@/lib/supabase/data'
 import { formatDate } from '@/lib/utils'
@@ -91,11 +88,11 @@ interface MixingPowderRow {
   mixedPowderInventoryKg?: number | string | null
 }
 
-interface NJPRow {
+interface EncapsulationRow {
   id?: string
 
-  njpCode?: string | null
-  njp_code?: string | null
+  encapsulationCode?: string | null
+  encapsulation_code?: string | null
   code?: string | null
   lotNumber?: string | null
   lot_number?: string | null
@@ -132,9 +129,18 @@ interface NJPRow {
   grossCapsulesFilledQty?: number | string | null
   gross_capsules_filled_qty?: number | string | null
 
+  availableCapsulesQty?: number | string | null
+  available_capsules_qty?: number | string | null
+  remainingCapsulesQty?: number | string | null
+  remaining_capsules_qty?: number | string | null
+
   status?: string | null
-  njpStatus?: string | null
-  njp_status?: string | null
+  encapsulationStatus?: string | null
+  encapsulation_status?: string | null
+
+  capsuleMg?: number | string | null
+  capsuleAmount?: number | string | null
+  capsuleStatus?: string | null
 }
 
 interface BrandBatchCode {
@@ -147,6 +153,8 @@ interface BrandBatchCode {
 
 interface AssemblyBottleRow {
   id?: string
+  assemblyId?: string | null
+  assembly_id?: string | null
   assemblyCode?: string | null
   assembly_code?: string | null
   code?: string | null
@@ -158,8 +166,8 @@ interface AssemblyBottleRow {
   batch_code_display?: string | null
   brandBatchCodes?: BrandBatchCode[] | null
   brand_batch_codes?: BrandBatchCode[] | null
-  njpCode?: string | null
-  njp_code?: string | null
+  encapsulationCode?: string | null
+  encapsulation_code?: string | null
   productName?: string | null
   product_name?: string | null
   batchNo?: string | null
@@ -174,8 +182,27 @@ interface AssemblyBottleRow {
   bucket?: string | null
   totalBottlesMade?: number | string | null
   total_bottles_made?: number | string | null
+  bottleQuantity?: number | string | null
+  bottle_quantity?: number | string | null
   bottleTotal?: number | string | null
   bottle_total?: number | string | null
+  availableBottleQuantity?: number | string | null
+  available_bottle_quantity?: number | string | null
+  remainingBottleQuantity?: number | string | null
+  capsulesPerBottle?: number | string | null
+  capsules_per_bottle?: number | string | null
+  unitsPerBottle?: number | string | null
+  totalUnitsUsed?: number | string | null
+  total_units_used?: number | string | null
+  availableUnitsQty?: number | string | null
+  available_units_qty?: number | string | null
+  remainingUnitsQty?: number | string | null
+  capsulesReceivedQty?: number | string | null
+  capsules_received_qty?: number | string | null
+  filledBottleWeight?: number | string | null
+  filled_bottle_weight?: number | string | null
+  weightUnit?: string | null
+  weight_unit?: string | null
   productionDate?: number | { seconds: number } | string | null
   production_date?: number | { seconds: number } | string | null
   expiryDate?: number | { seconds: number } | string | null
@@ -185,13 +212,6 @@ interface AssemblyBottleRow {
   assembly_status?: string | null
   comments?: string | null
   remarks?: string | null
-}
-
-interface AssemblyBatchCodeColumn {
-  key: string
-  label: string
-  brandId?: string | null
-  brandName?: string | null
 }
 
 const defaultForm: EditForm = {
@@ -273,8 +293,27 @@ function formatNumber(value: string | number | null | undefined): string {
   return Number.isInteger(parsed) ? String(parsed) : String(parsed)
 }
 
+function monthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function monthLabel(key: string): string {
+  const [year, month] = key.split('-').map(Number)
+  return new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+function recentMonthKeys(count: number): string[] {
+  const now = new Date()
+  const keys: string[] = []
+  for (let i = count - 1; i >= 0; i -= 1) {
+    keys.push(monthKey(new Date(now.getFullYear(), now.getMonth() - i, 1)))
+  }
+  return keys
+}
+
 function mixingPowderKg(record: MixingPowderRow): number | null {
   return (
+    numberOrNull((record as { weightKg?: number | string | null }).weightKg) ??
     numberOrNull(record.availableMixedPowderKg) ??
     numberOrNull(record.remainingMixedPowderKg) ??
     numberOrNull(record.mixedPowderInventoryKg) ??
@@ -286,49 +325,23 @@ function mixingPowderKg(record: MixingPowderRow): number | null {
   )
 }
 
-function mixingProductCode(record: MixingPowderRow): string {
-  return stringOrDash(
-    record.productCode ??
-      record.product_code ??
-      record.productNo ??
-      record.product_no ??
-      record.productNumber ??
-      record.product_number ??
-      record.productNpn ??
-      record.product_npn ??
-      record.npn ??
-      record.sku
-  )
-}
-
 function tabTitle(tab: FGCategory): string {
   if (tab === 'powder') return 'Powder'
   if (tab === 'capsule') return 'Capsule'
   return 'Bottle'
 }
 
-function njpCode(item: NJPRow): string {
+function encapsulationCode(item: EncapsulationRow): string {
   return stringOrDash(
-    item.njpCode ??
-      item.njp_code ??
+    item.encapsulationCode ??
+      item.encapsulation_code ??
       item.code ??
       item.lotNumber ??
       item.lot_number
   )
 }
 
-function njpMixCode(item: NJPRow): string {
-  return stringOrDash(
-    item.mixingCode ??
-      item.mixing_code ??
-      item.mixCode ??
-      item.mix_code ??
-      item.mixingName ??
-      item.mixing_name
-  )
-}
-
-function njpProductName(item: NJPRow): string {
+function encapsulationProductName(item: EncapsulationRow): string {
   return stringOrDash(
     item.productName ??
       item.product_name ??
@@ -338,169 +351,32 @@ function njpProductName(item: NJPRow): string {
   )
 }
 
-function njpLocation(item: NJPRow): string {
-  const location = String(item.location ?? item.rackNo ?? item.rack_no ?? '').trim()
-  const bucket = String(item.bucket ?? item.bucketNo ?? item.bucket_no ?? '').trim()
-
-  if (location && bucket) return `${location} / ${bucket}`
-  if (location) return location
-  if (bucket) return bucket
-
-  return '—'
-}
-
-function njpTfwMg(item: NJPRow): string {
+function encapsulationAvailableCapsulesQty(item: EncapsulationRow): string {
   return formatNumber(
-    item.targetFillWeightMg ??
-      item.target_fill_weight_mg ??
-      item.tfwMg ??
-      item.tfw_mg
+    item.availableCapsulesQty ??
+      item.available_capsules_qty ??
+      item.remainingCapsulesQty ??
+      item.remaining_capsules_qty ??
+      item.capsuleAmount
   )
 }
 
-function njpTotalCapsulesFilledQty(item: NJPRow): string {
-  return formatNumber(
-    item.totalCapsulesFilledQty ??
-      item.total_capsules_filled_qty ??
-      item.netCapsulesFilledQty ??
-      item.net_capsules_filled_qty ??
-      item.grossCapsulesFilledQty ??
-      item.gross_capsules_filled_qty
-  )
-}
-
-function njpStatus(item: NJPRow): string {
-  return stringOrDash(item.status ?? item.njpStatus ?? item.njp_status)
-}
-
-function assemblyCode(item: AssemblyBottleRow): string {
-  const codes = item.brandBatchCodes || item.brand_batch_codes || []
-  if (codes.length > 1) {
-    return stringOrDash(codes[0]?.batchCode ?? codes[0]?.assemblyCode ?? item.assemblyCode ?? item.batchCode ?? item.code)
-  }
-  return stringOrDash(item.assemblyCode ?? item.assembly_code ?? item.batchCode ?? item.batch_code ?? item.code)
-}
-
-function assemblyBatchCodeLines(item: AssemblyBottleRow): BrandBatchCode[] {
-  const codes = item.brandBatchCodes || item.brand_batch_codes || []
-  if (codes.length > 0) return codes
-
-  const display = String(item.batchCodeDisplay || item.batch_code_display || '').trim()
-  if (display.includes('Batch Code:')) {
-    const lines = display.split(/\n+/).map(line => line.trim()).filter(Boolean)
-    const parsed: BrandBatchCode[] = []
-    for (let index = 0; index < lines.length; index += 2) {
-      const label = lines[index] || ''
-      const code = lines[index + 1] || ''
-      parsed.push({
-        brandName: label.replace(/Batch Code:\s*$/i, '').trim(),
-        batchCode: code
-      })
-    }
-    if (parsed.length > 1) return parsed
-  }
-
-  return [{
-    brandId: item.brandId ?? item.brand_id ?? null,
-    brandName: item.brandName ?? item.brand_name ?? null,
-    batchCode: item.assemblyCode ?? item.assembly_code ?? item.batchCode ?? item.batch_code ?? item.code ?? ''
-  }]
-}
-
-function normalizeColumnKey(value: string | null | undefined): string {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-function batchCodeValue(code: BrandBatchCode): string {
-  return String(code.batchCode || code.assemblyCode || '').trim()
-}
-
-function batchColumnKey(code: BrandBatchCode): string {
-  return String(code.brandId || normalizeColumnKey(code.brandName) || normalizeColumnKey(code.codePrefix) || 'batch-code')
-}
-
-function addBatchColumn(map: Map<string, AssemblyBatchCodeColumn>, code: BrandBatchCode) {
-  const key = batchColumnKey(code)
-  if (map.has(key)) return
-
-  const brandName = String(code.brandName || '').trim()
-  map.set(key, {
-    key,
-    brandId: code.brandId,
-    brandName,
-    label: brandName ? `${brandName} Batch Code` : 'Batch Code'
-  })
-}
-
-function collectAssemblyBatchColumns(rows: AssemblyBottleRow[]): AssemblyBatchCodeColumn[] {
-  const columns = new Map<string, AssemblyBatchCodeColumn>()
-
-  rows
-    .filter(row => assemblyBatchCodeLines(row).length > 1)
-    .forEach(row => assemblyBatchCodeLines(row).forEach(code => addBatchColumn(columns, code)))
-
-  rows.forEach(row => assemblyBatchCodeLines(row).forEach(code => addBatchColumn(columns, code)))
-
-  if (columns.size === 0) {
-    columns.set('batch-code', { key: 'batch-code', label: 'Batch Code' })
-  }
-
-  return Array.from(columns.values())
-}
-
-function assemblyBatchCodeForColumn(item: AssemblyBottleRow, column: AssemblyBatchCodeColumn): string {
-  const exact = assemblyBatchCodeLines(item).find(code => batchColumnKey(code) === column.key)
-  if (exact) return batchCodeValue(exact) || '-'
-
-  if (column.key === 'batch-code') {
-    return stringOrDash(item.assemblyCode ?? item.assembly_code ?? item.batchCode ?? item.batch_code ?? item.code)
-  }
-
-  return '-'
-}
-
-function assemblyNJPCode(item: AssemblyBottleRow): string {
-  return stringOrDash(item.njpCode ?? item.njp_code)
+function assemblyCodeValue(item: AssemblyBottleRow): string {
+  return stringOrDash(item.assemblyCode ?? item.assembly_code ?? item.code)
 }
 
 function assemblyProductName(item: AssemblyBottleRow): string {
   return stringOrDash(item.productName ?? item.product_name)
 }
 
-function assemblyLocation(item: AssemblyBottleRow): string {
-  const location = String(item.location ?? item.rackNo ?? item.rack_no ?? '').trim()
-  const boxNo = String(item.boxNo ?? item.box_no ?? item.bucket ?? '').trim()
-
-  if (location && boxNo) return `${location} / ${boxNo}`
-  if (location) return location
-  if (boxNo) return boxNo
-
-  return 'â€”'
+function assemblyBatchCode(item: AssemblyBottleRow): string {
+  return stringOrDash(item.batchCode ?? item.batch_code)
 }
 
-function assemblyTotalBottles(item: AssemblyBottleRow): string {
+function assemblyAvailableBottleQuantity(item: AssemblyBottleRow): string {
   return formatNumber(
-    item.totalBottlesMade ??
-      item.total_bottles_made ??
-      item.bottleTotal ??
-      item.bottle_total
+    item.availableBottleQuantity ?? item.available_bottle_quantity ?? item.remainingBottleQuantity
   )
-}
-
-function assemblyDate(value: unknown): string {
-  return toDateInput(value) || 'â€”'
-}
-
-function assemblyComments(item: AssemblyBottleRow): string {
-  return stringOrDash(item.comments ?? item.remarks)
-}
-
-function assemblyStatus(item: AssemblyBottleRow): string {
-  return stringOrDash(item.status ?? item.assemblyStatus ?? item.assembly_status)
 }
 
 export default function FinishedGoodsPage() {
@@ -508,7 +384,7 @@ export default function FinishedGoodsPage() {
   const [activeTab, setActiveTab] = useState<FGCategory>('powder')
   const [rows, setRows] = useState<FinishedGood[]>([])
   const [mixingRows, setMixingRows] = useState<MixingPowderRow[]>([])
-  const [njpRows, setNjpRows] = useState<NJPRow[]>([])
+  const [encapsulationRows, setEncapsulationRows] = useState<EncapsulationRow[]>([])
   const [assemblyRows, setAssemblyRows] = useState<AssemblyBottleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -520,66 +396,44 @@ export default function FinishedGoodsPage() {
   const [historyRows, setHistoryRows] = useState<FinishedGoodHistory[]>([])
   const [historyTarget, setHistoryTarget] = useState<FinishedGood | null>(null)
   const { showToast } = useToast()
-  const assemblyBatchColumns = useMemo(
-    () => collectAssemblyBatchColumns(assemblyRows),
-    [assemblyRows]
-  )
+  const [activeMonth, setActiveMonth] = useState<string>(() => monthKey(new Date()))
+  const monthOptions = useMemo(() => recentMonthKeys(6), [])
+  const isCurrentMonth = activeMonth === monthKey(new Date())
   const activeTableColSpan =
-    activeTab === 'capsule'
-      ? 8
-      : activeTab === 'bottle'
-        ? assemblyBatchColumns.length + 9
-        : 6
+    activeTab === 'bottle'
+      ? (isCurrentMonth ? 6 : 5)
+      : (isCurrentMonth ? 5 : 4)
+
+  const loadRequestRef = useRef(0)
 
   useEffect(() => {
     void loadData(activeTab)
-  }, [activeTab])
+  }, [activeTab, activeMonth])
 
   async function loadData(category: FGCategory) {
+    const requestId = ++loadRequestRef.current
     try {
       setLoading(true)
       setError('')
-      await initSupabase()
-
-      if (category === 'powder') {
-        const list = await fetchLocalMixings({ limit: 500 })
-        setMixingRows(list as MixingPowderRow[])
-        setNjpRows([])
-        setAssemblyRows([])
-        setRows([])
-        return
-      }
-
-      if (category === 'capsule') {
-        const list = await fetchLocalNJPs({ limit: 500 })
-        setNjpRows(list as NJPRow[])
-        setMixingRows([])
-        setAssemblyRows([])
-        setRows([])
-        return
-      }
-
-      const list = await fetchLocalAssemblies({ limit: 500 })
-      setAssemblyRows(list as AssemblyBottleRow[])
-      setRows([])
-      setMixingRows([])
-      setNjpRows([])
+      const list = await fetchFinishedGoods({ category, month: activeMonth, limit: 200 })
+      if (loadRequestRef.current !== requestId) return
+      setRows(list as FinishedGood[])
+      setMixingRows(category === 'powder' ? (list as MixingPowderRow[]) : [])
+      setEncapsulationRows(category === 'capsule' ? (list as EncapsulationRow[]) : [])
+      setAssemblyRows(category === 'bottle' ? (list as AssemblyBottleRow[]) : [])
     } catch (err) {
+      if (loadRequestRef.current !== requestId) return
       console.error('Failed to load finished goods:', err)
       setRows([])
       setMixingRows([])
-      setNjpRows([])
+      setEncapsulationRows([])
       setAssemblyRows([])
 
-      setError(
-        category === 'powder'
-          ? 'Failed to load mixing powder records.'
-          : category === 'capsule'
-            ? 'Failed to load NJP capsule records. Please check the /api/njp/ backend list endpoint.'
-            : 'Failed to load Assembly bottle records. Please check the /api/assembly/ backend list endpoint.'
-      )
+      setError(`Failed to load ${tabTitle(category).toLowerCase()} finished goods records.`)
     } finally {
-      setLoading(false)
+      if (loadRequestRef.current === requestId) {
+        setLoading(false)
+      }
     }
   }
 
@@ -705,14 +559,19 @@ export default function FinishedGoodsPage() {
     navigate(`/mixing?edit=${encodeURIComponent(item.id)}`)
   }
 
-  function openNjpEdit(item: NJPRow) {
+  function openEncapsulationEdit(item: EncapsulationRow) {
     if (!item.id) return
-    navigate(`/njp?edit=${encodeURIComponent(item.id)}`)
+    navigate(`/encapsulation?edit=${encodeURIComponent(item.id)}`)
+  }
+
+  function assemblyRecordId(item: AssemblyBottleRow): string | undefined {
+    return item.assemblyId || item.assembly_id || item.id
   }
 
   function openAssemblyEdit(item: AssemblyBottleRow) {
-    if (!item.id) return
-    navigate(`/assembly?edit=${encodeURIComponent(item.id)}`)
+    const id = assemblyRecordId(item)
+    if (!id) return
+    navigate(`/assembly?edit=${encodeURIComponent(id)}`)
   }
 
   async function deleteMixingPowder(item: MixingPowderRow) {
@@ -736,38 +595,39 @@ export default function FinishedGoodsPage() {
     }
   }
 
-  async function deleteNjpCapsule(item: NJPRow) {
+  async function deleteEncapsulationCapsule(item: EncapsulationRow) {
     if (!item.id) return
 
-    const label = njpCode(item) || njpMixCode(item) || 'this NJP capsule record'
+    const label = encapsulationCode(item) || encapsulationProductName(item) || 'this Encapsulation capsule record'
 
     if (!window.confirm(`Delete ${label}?`)) return
 
     try {
       setLoading(true)
       setError('')
-      await deleteLocalNJP(item.id)
-      showToast({ message: 'NJP capsule record deleted', type: 'success' })
+      await deleteLocalEncapsulation(item.id)
+      showToast({ message: 'Encapsulation capsule record deleted', type: 'success' })
       await loadData('capsule')
     } catch (err) {
-      console.error('Failed to delete NJP capsule record:', err)
-      setError(err instanceof Error ? err.message : 'Failed to delete NJP capsule record.')
+      console.error('Failed to delete Encapsulation capsule record:', err)
+      setError(err instanceof Error ? err.message : 'Failed to delete Encapsulation capsule record.')
     } finally {
       setLoading(false)
     }
   }
 
   async function deleteAssemblyBottle(item: AssemblyBottleRow) {
-    if (!item.id) return
+    const id = assemblyRecordId(item)
+    if (!id) return
 
-    const label = assemblyCode(item) || assemblyNJPCode(item) || 'this Assembly bottle record'
+    const label = assemblyCodeValue(item) || assemblyProductName(item) || 'this Assembly bottle record'
 
     if (!window.confirm(`Delete ${label}?`)) return
 
     try {
       setLoading(true)
       setError('')
-      await deleteLocalAssembly(item.id)
+      await deleteLocalAssembly(id)
       showToast({ message: 'Assembly bottle record deleted', type: 'success' })
       await loadData('bottle')
     } catch (err) {
@@ -817,6 +677,29 @@ export default function FinishedGoodsPage() {
           </button>
         ))}
       </div>
+
+      <div className="flex flex-wrap gap-2">
+        {monthOptions.map((month) => (
+          <button
+            key={month}
+            type="button"
+            onClick={() => setActiveMonth(month)}
+            className={`rounded-xl border px-4 py-2 text-sm font-medium transition ${
+              activeMonth === month
+                ? 'border-zinc-900 bg-zinc-900 text-white'
+                : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+            }`}
+          >
+            {monthLabel(month)}
+          </button>
+        ))}
+      </div>
+
+      {!isCurrentMonth && (
+        <p className="text-sm text-zinc-500">
+          Showing a read-only snapshot of {monthLabel(activeMonth)}. Editing is only available on the current month.
+        </p>
+      )}
 
       {editing && activeTab !== 'capsule' && (
         <Card
@@ -934,42 +817,32 @@ export default function FinishedGoodsPage() {
             <TableRow>
               {activeTab === 'powder' && (
                 <>
-                  <TableHead>Product Name</TableHead>
-                  <TableHead>Product Code</TableHead>
+                  <TableHead className="w-12">Sr</TableHead>
                   <TableHead>Mixing Code</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Weight KG</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead>Product Name</TableHead>
+                  <TableHead>Quantity</TableHead>
+                  {isCurrentMonth && <TableHead>Actions</TableHead>}
                 </>
               )}
 
               {activeTab === 'capsule' && (
                 <>
-                  <TableHead>NJP Code</TableHead>
-                  <TableHead>Mixing Code</TableHead>
+                  <TableHead className="w-12">Sr</TableHead>
+                  <TableHead>Encapsulation Code</TableHead>
                   <TableHead>Product Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Target Fill Weight Mg</TableHead>
-                  <TableHead>Total Capsules Filled Qty</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead>Quantity</TableHead>
+                  {isCurrentMonth && <TableHead>Actions</TableHead>}
                 </>
               )}
 
               {activeTab === 'bottle' && (
                 <>
-                  {assemblyBatchColumns.map(column => (
-                    <TableHead key={column.key}>{column.label}</TableHead>
-                  ))}
-                  <TableHead>NJP Code</TableHead>
+                  <TableHead className="w-12">Sr</TableHead>
+                  <TableHead>Assembly Code</TableHead>
+                  <TableHead>Batch Code</TableHead>
                   <TableHead>Product Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Total Bottles Made</TableHead>
-                  <TableHead>Production Date</TableHead>
-                  <TableHead>Expiry Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Comments</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead>Quantity</TableHead>
+                  {isCurrentMonth && <TableHead>Actions</TableHead>}
                 </>
               )}
             </TableRow>
@@ -980,113 +853,93 @@ export default function FinishedGoodsPage() {
               <TableLoading colSpan={activeTableColSpan} />
             ) : activeTab === 'powder' ? (
               mixingRows.length === 0 ? (
-                <TableEmpty colSpan={6} message="No mixing records found." />
+                <TableEmpty colSpan={activeTableColSpan} message="No mixing records found." />
               ) : (
-                mixingRows.map((item) => (
+                mixingRows.map((item, index) => (
                   <TableRow key={item.id || item.mixingCode || item.productName || 'mixing-row'}>
-                    <TableCell className="font-medium">
-                      {item.productName || item.mixedPowderName || '—'}
-                    </TableCell>
-
-                    <TableCell>
-                      {mixingProductCode(item)}
-                    </TableCell>
+                    <TableCell className="text-zinc-500">{index + 1}</TableCell>
 
                     <TableCell className="font-semibold">
                       {item.mixingCode || '—'}
                     </TableCell>
 
-                    <TableCell>
-                      {item.location || item.rackNo || '—'}
+                    <TableCell className="font-medium">
+                      {item.productName || item.mixedPowderName || '—'}
                     </TableCell>
 
                     <TableCell>
                       {formatKg(mixingPowderKg(item))}
                     </TableCell>
 
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => openMixingEdit(item)}
-                          disabled={!item.id}
-                        >
-                          Edit
-                        </Button>
+                    {isCurrentMonth && (
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="subtle"
+                            size="sm"
+                            onClick={() => openMixingEdit(item)}
+                            disabled={!item.id}
+                          >
+                            Edit
+                          </Button>
 
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => void deleteMixingPowder(item)}
-                          disabled={!item.id}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => void deleteMixingPowder(item)}
+                            disabled={!item.id}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))
               )
             ) : activeTab === 'capsule' ? (
-              njpRows.length === 0 ? (
-                <TableEmpty colSpan={8} message="No capsule entries found." />
+              encapsulationRows.length === 0 ? (
+                <TableEmpty colSpan={activeTableColSpan} message="No capsule entries found." />
               ) : (
-                njpRows.map((item, index) => (
-                  <TableRow key={item.id || `${njpCode(item)}-${index}`}>
-                    <TableCell className="font-semibold">
-                      {njpCode(item)}
-                    </TableCell>
+                encapsulationRows.map((item, index) => (
+                  <TableRow key={item.id || `${encapsulationCode(item)}-${index}`}>
+                    <TableCell className="text-zinc-500">{index + 1}</TableCell>
 
-                    <TableCell>
-                      {njpMixCode(item)}
+                    <TableCell className="font-semibold">
+                      {encapsulationCode(item)}
                     </TableCell>
 
                     <TableCell className="font-medium">
-                      {njpProductName(item)}
+                      {encapsulationProductName(item)}
                     </TableCell>
 
                     <TableCell>
-                      {njpLocation(item)}
+                      {encapsulationAvailableCapsulesQty(item)}
                     </TableCell>
 
-                    <TableCell>
-                      {njpTfwMg(item)}
-                    </TableCell>
+                    {isCurrentMonth && (
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="subtle"
+                            size="sm"
+                            onClick={() => openEncapsulationEdit(item)}
+                            disabled={!item.id}
+                          >
+                            Edit
+                          </Button>
 
-                    <TableCell>
-                      {njpTotalCapsulesFilledQty(item)}
-                    </TableCell>
-
-                    <TableCell>
-                      {njpStatus(item) === '—' ? (
-                        '—'
-                      ) : (
-                        <Badge variant="info">{njpStatus(item)}</Badge>
-                      )}
-                    </TableCell>
-
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="subtle"
-                          size="sm"
-                          onClick={() => openNjpEdit(item)}
-                          disabled={!item.id}
-                        >
-                          Edit
-                        </Button>
-
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => void deleteNjpCapsule(item)}
-                          disabled={!item.id}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => void deleteEncapsulationCapsule(item)}
+                            disabled={!item.id}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))
               )
@@ -1094,70 +947,48 @@ export default function FinishedGoodsPage() {
               <TableEmpty colSpan={activeTableColSpan} message="No Assembly bottle entries found." />
             ) : (
               assemblyRows.map((item, index) => (
-                <TableRow key={item.id || `${assemblyCode(item)}-${index}`}>
-                  {assemblyBatchColumns.map(column => (
-                    <TableCell key={column.key} className="font-semibold">
-                      {assemblyBatchCodeForColumn(item, column)}
-                    </TableCell>
-                  ))}
+                <TableRow key={item.id || `${assemblyCodeValue(item)}-${index}`}>
+                  <TableCell className="text-zinc-500">{index + 1}</TableCell>
 
-                  <TableCell>
-                    {assemblyNJPCode(item)}
+                  <TableCell className="font-semibold">
+                    {assemblyCodeValue(item)}
                   </TableCell>
 
                   <TableCell>
+                    {assemblyBatchCode(item)}
+                  </TableCell>
+
+                  <TableCell className="font-medium">
                     {assemblyProductName(item)}
                   </TableCell>
 
                   <TableCell>
-                    {assemblyLocation(item)}
+                    {assemblyAvailableBottleQuantity(item)}
                   </TableCell>
 
-                  <TableCell>
-                    {assemblyTotalBottles(item)}
-                  </TableCell>
+                  {isCurrentMonth && (
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="subtle"
+                          size="sm"
+                          onClick={() => openAssemblyEdit(item)}
+                          disabled={!item.id}
+                        >
+                          Edit
+                        </Button>
 
-                  <TableCell>
-                    {assemblyDate(item.productionDate ?? item.production_date)}
-                  </TableCell>
-
-                  <TableCell>
-                    {assemblyDate(item.expiryDate ?? item.expiry_date)}
-                  </TableCell>
-
-                  <TableCell>
-                    {assemblyStatus(item) === 'â€”' ? (
-                      'â€”'
-                    ) : (
-                      <Badge variant="info">{assemblyStatus(item)}</Badge>
-                    )}
-                  </TableCell>
-
-                  <TableCell>
-                    {assemblyComments(item)}
-                  </TableCell>
-
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="subtle"
-                        size="sm"
-                        onClick={() => openAssemblyEdit(item)}
-                        disabled={!item.id}
-                      >
-                        Edit
-                      </Button>
-
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => void deleteAssemblyBottle(item)}
-                        disabled={!item.id}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </TableCell>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => void deleteAssemblyBottle(item)}
+                          disabled={!item.id}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))
             )}

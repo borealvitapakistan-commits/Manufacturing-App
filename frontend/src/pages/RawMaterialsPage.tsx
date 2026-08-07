@@ -34,6 +34,7 @@ import {
   saveRawMaterial,
   deleteRawMaterial
 } from '@/lib/supabase/data'
+import { ApiError } from '@/lib/api/client'
 import type { RawMaterial, RawMaterialCategory } from '@/types'
 
 interface FormState {
@@ -44,6 +45,7 @@ interface FormState {
   location: string
   coaLink: string
   comments: string
+  potency: string
   pricePerKg: string
 }
 
@@ -55,6 +57,7 @@ const defaultForm: FormState = {
   location: '',
   coaLink: '',
   comments: '',
+  potency: '',
   pricePerKg: ''
 }
 
@@ -62,6 +65,8 @@ interface CategoryFormState {
   name: string
   description: string
   isActive: boolean
+  isNmiCategory: boolean
+  metadataText: string
 }
 
 type RawMaterialsView = 'materials' | 'create-material' | 'create-category' | 'categories'
@@ -69,7 +74,9 @@ type RawMaterialsView = 'materials' | 'create-material' | 'create-category' | 'c
 const defaultCategoryForm: CategoryFormState = {
   name: '',
   description: '',
-  isActive: true
+  isActive: true,
+  isNmiCategory: false,
+  metadataText: ''
 }
 
 function viewButtonClass(active: boolean): string {
@@ -161,6 +168,24 @@ function normalizeText(value: string | null | undefined): string {
   return (value || '').trim().toLowerCase()
 }
 
+function parseCategoryMetadata(value: string): Record<string, unknown> | null {
+  const trimmed = value.trim()
+  if (!trimmed) return {}
+  const parsed = JSON.parse(trimmed)
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return null
+  return parsed as Record<string, unknown>
+}
+
+function categoryIsNmi(category: RawMaterialCategory): boolean {
+  return Boolean(category.isNmiCategory || category.is_nmi_category)
+}
+
+function categoryMetadata(category: RawMaterialCategory): Record<string, unknown> {
+  const metadata = category.metadata
+  if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') return {}
+  return metadata
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -185,7 +210,6 @@ export default function RawMaterialsPage() {
   const editingMaterial = materials.find(m => m.id === editingId) || null
 
   const activeCategories = categories.filter(category => category.isActive !== false)
-  const otherCategory = categories.find(category => normalizeText(category.name) === 'other') || null
 
   useEffect(() => {
     loadData()
@@ -201,12 +225,6 @@ export default function RawMaterialsPage() {
       ])
       setMaterials(list as RawMaterial[])
       setCategories(categoryList as RawMaterialCategory[])
-      const defaultCategory = (categoryList as RawMaterialCategory[]).find(
-        category => normalizeText(category.name) === 'other'
-      )
-      if (defaultCategory && !editingId) {
-        setForm(prev => prev.categoryId ? prev : { ...prev, categoryId: defaultCategory.id })
-      }
     } catch (err) {
       console.error('Failed to load raw materials:', err)
       setError('Failed to load raw materials.')
@@ -217,7 +235,6 @@ export default function RawMaterialsPage() {
 
   function validateForm(): string | null {
     if (!form.name.trim()) return 'Material name is required.'
-    if (!form.categoryId && !otherCategory) return 'Create or select a material category.'
     return null
   }
 
@@ -233,18 +250,19 @@ export default function RawMaterialsPage() {
       setSaving(true)
 
       const code = generateRMCode(form.name.trim())
-      const selectedCategory = categories.find(category => category.id === (form.categoryId || otherCategory?.id))
+      const selectedCategory = categories.find(category => category.id === form.categoryId)
 
       const payload = {
         id: editingId || undefined,
         name: form.name.trim(),
         code,
         qty: Number(form.qty) || 0,
-        categoryId: form.categoryId || otherCategory?.id || null,
+        categoryId: form.categoryId || null,
         category: selectedCategory?.name || form.category.trim() || null,
         location: form.location.trim() || null,
         coaLink: form.coaLink.trim() || null,
         comments: form.comments.trim() || null,
+        potency: form.potency.trim() || null,
         pricePerKg: Number(form.pricePerKg) || 0
       }
 
@@ -260,7 +278,7 @@ export default function RawMaterialsPage() {
       await loadData()
     } catch (err) {
       console.error('Failed to save material:', err)
-      setError('Failed to save material.')
+      setError(err instanceof ApiError ? err.message : 'Failed to save material.')
     } finally {
       setSaving(false)
     }
@@ -272,6 +290,17 @@ export default function RawMaterialsPage() {
       setError('Category name is required.')
       return
     }
+    let metadata: Record<string, unknown> | null
+    try {
+      metadata = parseCategoryMetadata(categoryForm.metadataText)
+    } catch {
+      setError('Category metadata must be valid JSON.')
+      return
+    }
+    if (metadata === null) {
+      setError('Category metadata must be a JSON object.')
+      return
+    }
 
     try {
       setCategorySaving(true)
@@ -279,7 +308,9 @@ export default function RawMaterialsPage() {
         id: categoryEditingId || undefined,
         name: categoryForm.name.trim(),
         description: categoryForm.description.trim() || null,
-        isActive: categoryForm.isActive
+        isActive: categoryForm.isActive,
+        isNmiCategory: categoryForm.isNmiCategory,
+        metadata
       })
       showToast({
         message: categoryEditingId ? 'Category updated' : 'Category created',
@@ -290,7 +321,7 @@ export default function RawMaterialsPage() {
       await loadData()
     } catch (err) {
       console.error('Failed to save category:', err)
-      setError('Failed to save category.')
+      setError(err instanceof ApiError ? err.message : 'Failed to save category.')
     } finally {
       setCategorySaving(false)
     }
@@ -339,11 +370,12 @@ export default function RawMaterialsPage() {
     setForm({
       name: material.name || '',
       qty: material.qty?.toString() || '',
-      categoryId: matchedCategory?.id || otherCategory?.id || '',
+      categoryId: matchedCategory?.id || '',
       category: material.category || '',
       location: material.location || '',
       coaLink: material.coaLink || '',
       comments: material.comments || '',
+      potency: material.potency || '',
       pricePerKg: material.pricePerKg?.toString() || ''
     })
     setError('')
@@ -356,23 +388,25 @@ export default function RawMaterialsPage() {
     setCategoryForm({
       name: category.name || '',
       description: category.description || '',
-      isActive: category.isActive !== false
+      isActive: category.isActive !== false,
+      isNmiCategory: categoryIsNmi(category),
+      metadataText: JSON.stringify(categoryMetadata(category), null, 2)
     })
   }
 
   function resetForm() {
-    setForm({ ...defaultForm, categoryId: otherCategory?.id || '' })
+    setForm({ ...defaultForm })
     setEditingId(null)
     setError('')
   }
 
   function resetCategoryForm() {
-    setCategoryForm(defaultCategoryForm)
+    setCategoryForm({ ...defaultCategoryForm })
     setCategoryEditingId(null)
   }
 
   // Preview the generated code as user types
-  const previewCode = form.name.trim() ? generateRMCode(form.name.trim()) : '—'
+  const previewCode = form.name.trim() ? generateRMCode(form.name.trim()) : '-'
 
   return (
     <div className="space-y-6">
@@ -526,6 +560,14 @@ export default function RawMaterialsPage() {
               step="0.01"
             />
           </div>
+          <div>
+            <Label>Potency</Label>
+            <Input
+              value={form.potency}
+              onChange={e => setForm({ ...form, potency: e.target.value })}
+              placeholder="e.g., 95%"
+            />
+          </div>
         </div>
       </Card>
       )}
@@ -535,12 +577,6 @@ export default function RawMaterialsPage() {
         title={categoryEditingId ? 'Edit Category' : 'Create Category'}
         actions={(
           <div className="flex gap-2">
-            <Button
-              variant="subtle"
-              onClick={() => setCategoryForm({ ...categoryForm, name: 'Other', description: 'Default category for uncategorized raw materials.' })}
-            >
-              Use Other Defaults
-            </Button>
             {categoryEditingId && (
               <Button variant="ghost" onClick={resetCategoryForm}>Cancel</Button>
             )}
@@ -568,13 +604,38 @@ export default function RawMaterialsPage() {
               placeholder="Optional category notes"
             />
           </div>
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-            <Checkbox
-              id="raw-material-category-active"
-              label="Active category"
-              checked={categoryForm.isActive}
-              onChange={e => setCategoryForm({ ...categoryForm, isActive: e.target.checked })}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+              <Checkbox
+                id="raw-material-category-active"
+                label="Active category"
+                checked={categoryForm.isActive}
+                onChange={e => setCategoryForm({ ...categoryForm, isActive: e.target.checked })}
+              />
+            </div>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+              <Checkbox
+                id="raw-material-category-nmi"
+                label="NMI category"
+                checked={categoryForm.isNmiCategory}
+                onChange={e => setCategoryForm({ ...categoryForm, isNmiCategory: e.target.checked })}
+              />
+              <p className="mt-2 text-sm text-zinc-500">
+                Use this for non-medicinal ingredients in manufacturing forms.
+              </p>
+            </div>
+          </div>
+          <div>
+            <Label>Metadata (JSON)</Label>
+            <TextArea
+              rows={5}
+              value={categoryForm.metadataText}
+              onChange={e => setCategoryForm({ ...categoryForm, metadataText: e.target.value })}
+              placeholder='{"storage": "cool dry"}'
             />
+            <p className="mt-1 text-sm text-zinc-500">
+              Optional structured data. Leave blank if there is no metadata.
+            </p>
           </div>
         </div>
       </Card>
@@ -586,20 +647,38 @@ export default function RawMaterialsPage() {
           {categories.length === 0 ? (
             <div className="py-3 text-sm text-zinc-500">No categories found.</div>
           ) : (
-            categories.map(category => (
-              <div key={category.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="font-semibold">{category.name}</div>
-                  <div className="text-sm text-zinc-500">{category.description || '-'}</div>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="subtle" size="sm" onClick={() => startCategoryEdit(category)}>Edit</Button>
-                  {normalizeText(category.name) !== 'other' && (
+            categories.map(category => {
+              const metadata = categoryMetadata(category)
+              return (
+                <div key={category.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-semibold">{category.name}</div>
+                      {categoryIsNmi(category) && (
+                        <span className="rounded-full bg-cyan-100 px-2 py-1 text-xs font-semibold text-cyan-800">
+                          NMI
+                        </span>
+                      )}
+                      {category.isActive === false && (
+                        <span className="rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-600">
+                          Inactive
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-zinc-500">{category.description || '-'}</div>
+                    {Object.keys(metadata).length > 0 && (
+                      <div className="mt-1 break-all text-xs text-zinc-500">
+                        Metadata: {JSON.stringify(metadata)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="subtle" size="sm" onClick={() => startCategoryEdit(category)}>Edit</Button>
                     <Button variant="danger" size="sm" onClick={() => setCategoryDeleteTarget(category)}>Delete</Button>
-                  )}
+                  </div>
                 </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </Card>
@@ -615,6 +694,7 @@ export default function RawMaterialsPage() {
               <TableHead>Raw Material name</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Remaining Qty (KG)</TableHead>
+              <TableHead>Potency</TableHead>
               <TableHead>COA Link</TableHead>
               <TableHead>Comments</TableHead>
               <TableHead>Location</TableHead>
@@ -623,9 +703,9 @@ export default function RawMaterialsPage() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoading colSpan={9} />
+              <TableLoading colSpan={10} />
             ) : materials.length === 0 ? (
-              <TableEmpty colSpan={9} message="No raw materials yet. Add your first material!" />
+              <TableEmpty colSpan={10} message="No raw materials yet. Add your first material!" />
             ) : (
               materials.map((material, index) => (
                 <TableRow key={material.id}>
@@ -634,6 +714,7 @@ export default function RawMaterialsPage() {
                   <TableCell>{material.name}</TableCell>
                   <TableCell>{material.category || categories.find(category => category.id === material.categoryId)?.name || '-'}</TableCell>
                   <TableCell>{material.qty ?? 0}</TableCell>
+                  <TableCell>{material.potency || '-'}</TableCell>
                   <TableCell>{material.coaLink || '-'}</TableCell>
                   <TableCell>{material.comments || '-'}</TableCell>
                   <TableCell>{material.location || '-'}</TableCell>

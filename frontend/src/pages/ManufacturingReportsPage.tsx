@@ -20,7 +20,7 @@ import {
 import {
   fetchLocalAssemblies,
   fetchLocalMixings,
-  fetchLocalNJPs,
+  fetchLocalEncapsulations,
   initSupabase
 } from '@/lib/supabase/data'
 import type { FGCategory } from '@/types'
@@ -64,10 +64,10 @@ interface MixingPowderRow {
   updatedAt?: number | { seconds: number } | string | null
 }
 
-interface NJPRow {
+interface EncapsulationRow {
   id?: string
-  njpCode?: string | null
-  njp_code?: string | null
+  encapsulationCode?: string | null
+  encapsulation_code?: string | null
   code?: string | null
   lotNumber?: string | null
   lot_number?: string | null
@@ -99,8 +99,8 @@ interface NJPRow {
   grossCapsulesFilledQty?: number | string | null
   gross_capsules_filled_qty?: number | string | null
   status?: string | null
-  njpStatus?: string | null
-  njp_status?: string | null
+  encapsulationStatus?: string | null
+  encapsulation_status?: string | null
   productionDate?: number | { seconds: number } | string | null
   startDate?: number | { seconds: number } | string | null
   createdAt?: number | { seconds: number } | string | null
@@ -128,8 +128,8 @@ interface AssemblyBottleRow {
   batch_code_display?: string | null
   brandBatchCodes?: BrandBatchCode[] | null
   brand_batch_codes?: BrandBatchCode[] | null
-  njpCode?: string | null
-  njp_code?: string | null
+  encapsulationCode?: string | null
+  encapsulation_code?: string | null
   productName?: string | null
   product_name?: string | null
   batchCode?: string | null
@@ -142,8 +142,27 @@ interface AssemblyBottleRow {
   bucket?: string | null
   totalBottlesMade?: number | string | null
   total_bottles_made?: number | string | null
+  bottleQuantity?: number | string | null
+  bottle_quantity?: number | string | null
   bottleTotal?: number | string | null
   bottle_total?: number | string | null
+  availableBottleQuantity?: number | string | null
+  available_bottle_quantity?: number | string | null
+  remainingBottleQuantity?: number | string | null
+  capsulesPerBottle?: number | string | null
+  capsules_per_bottle?: number | string | null
+  unitsPerBottle?: number | string | null
+  totalUnitsUsed?: number | string | null
+  total_units_used?: number | string | null
+  availableUnitsQty?: number | string | null
+  available_units_qty?: number | string | null
+  remainingUnitsQty?: number | string | null
+  capsulesReceivedQty?: number | string | null
+  capsules_received_qty?: number | string | null
+  filledBottleWeight?: number | string | null
+  filled_bottle_weight?: number | string | null
+  weightUnit?: string | null
+  weight_unit?: string | null
   productionDate?: number | { seconds: number } | string | null
   production_date?: number | { seconds: number } | string | null
   expiryDate?: number | { seconds: number } | string | null
@@ -367,19 +386,19 @@ function mixingReportDate(record: MixingPowderRow): number | null {
   )
 }
 
-function njpCode(item: NJPRow): string {
-  return stringOrDash(item.njpCode ?? item.njp_code ?? item.code ?? item.lotNumber ?? item.lot_number)
+function encapsulationCode(item: EncapsulationRow): string {
+  return stringOrDash(item.encapsulationCode ?? item.encapsulation_code ?? item.code ?? item.lotNumber ?? item.lot_number)
 }
 
-function njpMixCode(item: NJPRow): string {
+function encapsulationMixingCode(item: EncapsulationRow): string {
   return stringOrDash(item.mixingCode ?? item.mixing_code ?? item.mixCode ?? item.mix_code ?? item.mixingName ?? item.mixing_name)
 }
 
-function njpProductName(item: NJPRow): string {
+function encapsulationProductName(item: EncapsulationRow): string {
   return stringOrDash(item.productName ?? item.product_name ?? item.batchCode ?? item.batch_code ?? item.name)
 }
 
-function njpLocation(item: NJPRow): string {
+function encapsulationLocation(item: EncapsulationRow): string {
   const location = String(item.location ?? item.rackNo ?? item.rack_no ?? '').trim()
   const bucket = String(item.bucket ?? item.bucketNo ?? item.bucket_no ?? '').trim()
   if (location && bucket) return `${location} / ${bucket}`
@@ -388,11 +407,11 @@ function njpLocation(item: NJPRow): string {
   return '-'
 }
 
-function njpTfwMg(item: NJPRow): string {
+function encapsulationTfwMg(item: EncapsulationRow): string {
   return formatNumber(item.targetFillWeightMg ?? item.target_fill_weight_mg ?? item.tfwMg ?? item.tfw_mg)
 }
 
-function njpTotalCapsulesFilledQty(item: NJPRow): string {
+function encapsulationTotalCapsulesFilledQty(item: EncapsulationRow): string {
   return formatNumber(
     item.totalCapsulesFilledQty ??
       item.total_capsules_filled_qty ??
@@ -403,11 +422,11 @@ function njpTotalCapsulesFilledQty(item: NJPRow): string {
   )
 }
 
-function njpStatus(item: NJPRow): string {
-  return stringOrDash(item.status ?? item.njpStatus ?? item.njp_status)
+function encapsulationStatus(item: EncapsulationRow): string {
+  return stringOrDash(item.status ?? item.encapsulationStatus ?? item.encapsulation_status)
 }
 
-function njpReportDate(record: NJPRow): number | null {
+function encapsulationReportDate(record: EncapsulationRow): number | null {
   return (
     parseDateMillis(record.productionDate) ??
     parseDateMillis(record.startDate) ??
@@ -496,8 +515,8 @@ function assemblyBatchCodeForColumn(item: AssemblyBottleRow, column: AssemblyBat
   return '-'
 }
 
-function assemblyNJPCode(item: AssemblyBottleRow): string {
-  return stringOrDash(item.njpCode ?? item.njp_code)
+function assemblyEncapsulationCode(item: AssemblyBottleRow): string {
+  return stringOrDash(item.encapsulationCode ?? item.encapsulation_code)
 }
 
 function assemblyProductName(item: AssemblyBottleRow): string {
@@ -514,7 +533,48 @@ function assemblyLocation(item: AssemblyBottleRow): string {
 }
 
 function assemblyTotalBottles(item: AssemblyBottleRow): string {
-  return formatNumber(item.totalBottlesMade ?? item.total_bottles_made ?? item.bottleTotal ?? item.bottle_total)
+  return formatNumber(
+    item.bottleQuantity ??
+      item.bottle_quantity ??
+      item.totalBottlesMade ??
+      item.total_bottles_made ??
+      item.bottleTotal ??
+      item.bottle_total
+  )
+}
+
+function assemblyBatchCode(item: AssemblyBottleRow): string {
+  return stringOrDash(item.batchCode ?? item.batch_code)
+}
+
+function assemblyCapsulesPerBottle(item: AssemblyBottleRow): string {
+  return formatNumber(item.capsulesPerBottle ?? item.capsules_per_bottle ?? item.unitsPerBottle)
+}
+
+function assemblyTotalUnitsUsed(item: AssemblyBottleRow): string {
+  return formatNumber(
+    item.totalUnitsUsed ??
+      item.total_units_used ??
+      item.capsulesReceivedQty ??
+      item.capsules_received_qty
+  )
+}
+
+function assemblyAvailableBottleQuantity(item: AssemblyBottleRow): string {
+  return formatNumber(
+    item.availableBottleQuantity ?? item.available_bottle_quantity ?? item.remainingBottleQuantity
+  )
+}
+
+function assemblyAvailableUnitsQty(item: AssemblyBottleRow): string {
+  return formatNumber(item.availableUnitsQty ?? item.available_units_qty ?? item.remainingUnitsQty)
+}
+
+function assemblyFilledBottleWeight(item: AssemblyBottleRow): string {
+  const weight = item.filledBottleWeight ?? item.filled_bottle_weight
+  if (weight === null || weight === undefined || weight === '') return '-'
+  const unit = item.weightUnit ?? item.weight_unit ?? 'g'
+  return `${formatNumber(weight)} ${unit}`
 }
 
 function assemblyComments(item: AssemblyBottleRow): string {
@@ -559,14 +619,14 @@ const powderColumns: ReportColumn<MixingPowderRow>[] = [
   { label: 'Weight KG', width: 85, get: row => formatKg(mixingPowderKg(row)) }
 ]
 
-const capsuleColumns: ReportColumn<NJPRow>[] = [
-  { label: 'NJP Code', width: 95, get: njpCode },
-  { label: 'Mixing Code', width: 105, get: njpMixCode },
-  { label: 'Product Name', width: 155, get: njpProductName },
-  { label: 'Location', width: 95, get: njpLocation },
-  { label: 'Target Fill Weight Mg', width: 110, get: njpTfwMg },
-  { label: 'Total Capsules Filled Qty', width: 130, get: njpTotalCapsulesFilledQty },
-  { label: 'Status', width: 90, get: njpStatus }
+const capsuleColumns: ReportColumn<EncapsulationRow>[] = [
+  { label: 'Encapsulation Code', width: 95, get: encapsulationCode },
+  { label: 'Mixing Code', width: 105, get: encapsulationMixingCode },
+  { label: 'Product Name', width: 155, get: encapsulationProductName },
+  { label: 'Location', width: 95, get: encapsulationLocation },
+  { label: 'Target Fill Weight Mg', width: 110, get: encapsulationTfwMg },
+  { label: 'Total Capsules Filled Qty', width: 130, get: encapsulationTotalCapsulesFilledQty },
+  { label: 'Status', width: 90, get: encapsulationStatus }
 ]
 
 function makeBottleColumns(batchColumns: AssemblyBatchCodeColumn[]): ReportColumn<AssemblyBottleRow>[] {
@@ -576,10 +636,16 @@ function makeBottleColumns(batchColumns: AssemblyBatchCodeColumn[]): ReportColum
     width: 105,
     get: (row: AssemblyBottleRow) => assemblyBatchCodeForColumn(row, column)
   })),
-  { label: 'NJP Code', width: 85, get: assemblyNJPCode },
+  { label: 'Batch Code', width: 100, get: assemblyBatchCode },
+  { label: 'Encapsulation Code', width: 85, get: assemblyEncapsulationCode },
   { label: 'Product Name', width: 130, get: assemblyProductName },
   { label: 'Location', width: 90, get: assemblyLocation },
-  { label: 'Total Bottles Made', width: 90, get: assemblyTotalBottles },
+  { label: 'Capsules/Units per Bottle', width: 100, get: assemblyCapsulesPerBottle },
+  { label: 'Bottle Quantity', width: 90, get: assemblyTotalBottles },
+  { label: 'Available Bottle Quantity', width: 110, get: assemblyAvailableBottleQuantity },
+  { label: 'Total Units Used', width: 100, get: assemblyTotalUnitsUsed },
+  { label: 'Available Units Qty', width: 110, get: assemblyAvailableUnitsQty },
+  { label: 'Filled Bottle Weight', width: 100, get: assemblyFilledBottleWeight },
   { label: 'Production Date', width: 85, get: row => displayDate(row.productionDate ?? row.production_date) },
   { label: 'Expiry Date', width: 75, get: row => displayDate(row.expiryDate ?? row.expiry_date) },
   { label: 'Status', width: 80, get: assemblyStatus },
@@ -633,18 +699,18 @@ function buildMixingDetailSections(row: MixingPowderRow): ReportSection[] {
   ]
 }
 
-function buildNJPDetailSections(row: NJPRow): ReportSection[] {
+function buildEncapsulationDetailSections(row: EncapsulationRow): ReportSection[] {
   const record = row as Record<string, any>
-  const timeLogs = firstArray(record, ['njpSessions', 'njpTimeLogs', 'timeLogs'])
+  const timeLogs = firstArray(record, ['encapsulationSessions', 'encapsulationTimeLogs', 'timeLogs'])
   const loadChecks = firstArray(record, ['loadChecks'])
 
   const sections: ReportSection[] = [
-    sectionFromDetails('NJP / Capsule Details', [
-      detailRow('NJP Code', njpCode(row)),
-      detailRow('Mixing Code', njpMixCode(row)),
+    sectionFromDetails('Encapsulation / Capsule Details', [
+      detailRow('Encapsulation Code', encapsulationCode(row)),
+      detailRow('Mixing Code', encapsulationMixingCode(row)),
       detailRow('Mixing Name', record.mixingName),
       detailRow('Brand', record.brandName ?? record.brandNames),
-      detailRow('Product Name', njpProductName(row)),
+      detailRow('Product Name', encapsulationProductName(row)),
       detailRow('Location', record.location ?? record.rackNo),
       detailRow('Bucket', record.bucket ?? record.bucketNo),
       detailRow('Capsule Size', record.capsuleSize),
@@ -652,9 +718,9 @@ function buildNJPDetailSections(row: NJPRow): ReportSection[] {
       detailRow('Machine Speed', record.machineSpeed),
       detailRow('Raw Material Received Kg', record.rawMaterialReceivedKg),
       detailRow('Mixing Total Kg', record.mixingTotalKg),
-      detailRow('Mixing Available Before NJP Kg', record.mixingAvailableBeforeNJPkg),
-      detailRow('Mixing Used in NJP Kg', record.mixingUsedInNJPkg),
-      detailRow('Mixing Available After NJP Kg', record.mixingAvailableAfterNJPkg ?? record.mixingAvailableKg),
+      detailRow('Mixing Available Before Encapsulation Kg', record.mixingAvailableBeforeEncapsulationKg),
+      detailRow('Mixing Used in Encapsulation Kg', record.mixingUsedInEncapsulationKg),
+      detailRow('Mixing Available After Encapsulation Kg', record.mixingAvailableAfterEncapsulationKg ?? record.mixingAvailableKg),
       detailRow('Source Target Fill Weight Mg', record.sourceTargetFillWeightMg),
       detailRow('Target Fill Weight Mg', record.targetFillWeightMg ?? record.tfwMg),
       detailRow('Target Fill Weight Modified', record.targetFillWeightModified),
@@ -678,13 +744,13 @@ function buildNJPDetailSections(row: NJPRow): ReportSection[] {
       detailRow('Start Time', record.startTime),
       dateDetailRow('End Date', record.endDate),
       detailRow('End Time', record.endTime),
-      detailRow('Status', njpStatus(row)),
+      detailRow('Status', encapsulationStatus(row)),
       detailRow('Operator Name', record.operatorName),
       detailRow('Remarks', record.remarks),
       detailRow('Change Reason', record.changeReason ?? record.reason)
     ]),
     {
-      title: 'NJP Daily Time Log',
+      title: 'Encapsulation Daily Time Log',
       columns: timeLogColumns,
       rows: timeLogs
     }
@@ -692,7 +758,7 @@ function buildNJPDetailSections(row: NJPRow): ReportSection[] {
 
   if (loadChecks.length) {
     sections.push({
-      title: 'NJP Load Checks',
+      title: 'Encapsulation Load Checks',
       columns: [
         { label: 'Check', width: 180, get: item => reportValue(item.label ?? item.name ?? item.check) },
         { label: 'Value', width: 120, get: item => reportValue(item.value ?? item.status ?? item.checked) },
@@ -713,7 +779,8 @@ function buildAssemblyDetailSections(row: AssemblyBottleRow, batchColumns: Assem
   return [
     sectionFromDetails('Assembly / Bottle Details', [
       ...batchRows,
-      detailRow('NJP Code', assemblyNJPCode(row)),
+      detailRow('Batch Code', assemblyBatchCode(row)),
+      detailRow('Encapsulation Code', assemblyEncapsulationCode(row)),
       detailRow('Mixing Code', record.mixingCode),
       detailRow('Mixing Name', record.mixingName),
       detailRow('Brand', record.brandName ?? record.brandNames),
@@ -725,14 +792,14 @@ function buildAssemblyDetailSections(row: AssemblyBottleRow, batchColumns: Assem
       detailRow('Capsule Weight Mg', record.capsuleWeightMg ?? record.capsuleWeight),
       detailRow('Source Capsule Weight Mg', record.sourceCapsuleWeightMg),
       detailRow('Capsule Weight Modified', record.capsuleWeightModified),
-      detailRow('Capsules Received Qty', record.capsulesReceivedQty),
+      detailRow('Capsules/Units per Bottle', assemblyCapsulesPerBottle(row)),
+      detailRow('Bottle Quantity', assemblyTotalBottles(row)),
+      detailRow('Available Bottle Quantity', assemblyAvailableBottleQuantity(row)),
+      detailRow('Total Units Used', assemblyTotalUnitsUsed(row)),
+      detailRow('Available Units Qty', assemblyAvailableUnitsQty(row)),
       detailRow('Capsules Received Kg', record.capsulesReceivedKg),
-      detailRow('Capsules Per Bottle', record.capsulesPerBottle),
-      detailRow('Total Bottles Made', assemblyTotalBottles(row)),
-      detailRow('Loose Capsules Qty', record.looseCapsulesQty),
-      detailRow('Remaining Capsules After Bottling Qty', record.remainingCapsulesAfterBottlingQty),
       detailRow('Bottle Type', record.bottleCapsuleType ?? record.bottleSize ?? record.bottleCC),
-      detailRow('Filled Bottle Weight', record.filledBottleWeight),
+      detailRow('Filled Bottle Weight', assemblyFilledBottleWeight(row)),
       detailRow('Capsules Available Before Assembly Qty', record.capsulesAvailableBeforeAssemblyQty),
       detailRow('Capsules Used in Assembly Qty', record.capsulesUsedInAssemblyQty),
       detailRow('Capsules Available After Assembly Qty', record.capsulesAvailableAfterAssemblyQty),
@@ -763,7 +830,7 @@ function buildSpecificReportSections(
   batchColumns: AssemblyBatchCodeColumn[]
 ): ReportSection[] {
   if (tab === 'powder') return buildMixingDetailSections(row as MixingPowderRow)
-  if (tab === 'capsule') return buildNJPDetailSections(row as NJPRow)
+  if (tab === 'capsule') return buildEncapsulationDetailSections(row as EncapsulationRow)
   return buildAssemblyDetailSections(row as AssemblyBottleRow, batchColumns)
 }
 
@@ -932,7 +999,7 @@ function printReport(sections: ReportSection[], title: string, subtitle: string)
 export default function ManufacturingReportsPage() {
   const [activeTab, setActiveTab] = useState<FGCategory>('powder')
   const [mixingRows, setMixingRows] = useState<MixingPowderRow[]>([])
-  const [njpRows, setNjpRows] = useState<NJPRow[]>([])
+  const [encapsulationRows, setEncapsulationRows] = useState<EncapsulationRow[]>([])
   const [assemblyRows, setAssemblyRows] = useState<AssemblyBottleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -956,13 +1023,13 @@ export default function ManufacturingReportsPage() {
         setLoading(true)
         setError('')
         await initSupabase()
-        const [mixings, njps, assemblies] = await Promise.all([
+        const [mixings, encapsulations, assemblies] = await Promise.all([
           fetchLocalMixings({ limit: 1000 }),
-          fetchLocalNJPs({ limit: 1000 }),
+          fetchLocalEncapsulations({ limit: 1000 }),
           fetchLocalAssemblies({ limit: 1000 })
         ])
         setMixingRows(mixings as MixingPowderRow[])
-        setNjpRows(njps as NJPRow[])
+        setEncapsulationRows(encapsulations as EncapsulationRow[])
         setAssemblyRows(assemblies as AssemblyBottleRow[])
       } catch (err) {
         console.error('Failed to load manufacturing reports:', err)
@@ -977,9 +1044,9 @@ export default function ManufacturingReportsPage() {
 
   const activeSection = useMemo<ReportSection>(() => {
     if (activeTab === 'powder') return { title: 'Powders', columns: powderColumns, rows: mixingRows }
-    if (activeTab === 'capsule') return { title: 'Capsules', columns: capsuleColumns, rows: njpRows }
+    if (activeTab === 'capsule') return { title: 'Capsules', columns: capsuleColumns, rows: encapsulationRows }
     return { title: 'Bottles', columns: bottleColumns, rows: assemblyRows }
-  }, [activeTab, assemblyRows, bottleColumns, mixingRows, njpRows])
+  }, [activeTab, assemblyRows, bottleColumns, mixingRows, encapsulationRows])
 
   const rangedAssemblyRows = useMemo(
     () => assemblyRows.filter(row => inRange(assemblyReportDate(row), fromDate, toDate)),
@@ -1003,14 +1070,14 @@ export default function ManufacturingReportsPage() {
     {
       title: 'Capsules',
       columns: capsuleColumns,
-      rows: njpRows.filter(row => inRange(njpReportDate(row), fromDate, toDate))
+      rows: encapsulationRows.filter(row => inRange(encapsulationReportDate(row), fromDate, toDate))
     },
     {
       title: 'Bottles',
       columns: rangedBottleColumns,
       rows: rangedAssemblyRows
     }
-  ], [fromDate, mixingRows, njpRows, rangedAssemblyRows, rangedBottleColumns, toDate])
+  ], [fromDate, mixingRows, encapsulationRows, rangedAssemblyRows, rangedBottleColumns, toDate])
 
   async function handleRowAction(action: ReportAction, section: ReportSection, row: unknown) {
     const title = `${section.title} Manufacturing Report`
@@ -1161,7 +1228,7 @@ export default function ManufacturingReportsPage() {
         open={rangeAction !== null}
         onClose={() => setRangeAction(null)}
         title={rangeAction === 'print' ? 'Print All Manufacturing Reports' : 'Download All Manufacturing Reports'}
-        description="Choose a date range for Mixing, NJP, and Assembly records."
+        description="Choose a date range for Mixing, Encapsulation, and Assembly records."
         className="max-w-lg"
       >
         <div className="grid gap-4 sm:grid-cols-2">

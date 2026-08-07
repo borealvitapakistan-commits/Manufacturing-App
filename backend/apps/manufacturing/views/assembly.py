@@ -14,7 +14,11 @@ class AssemblyListCreateView(APIView):
                 "data": AssemblyService.list(
                     brand_id=request.query_params.get("brandId") or None,
                     product_id=request.query_params.get("productId") or None,
-                    njp_id=request.query_params.get("njpId") or None,
+                    njp_id=(
+                        request.query_params.get("encapsulationId")
+                        or request.query_params.get("njpId")
+                        or None
+                    ),
                     search=(
                         request.query_params.get("search")
                         or request.query_params.get("q")

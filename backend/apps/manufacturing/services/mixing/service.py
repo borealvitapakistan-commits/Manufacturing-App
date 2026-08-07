@@ -125,6 +125,27 @@ class MixingService(MixingRules):
         }
 
     @classmethod
+    def _product_code_products(cls) -> list[dict[str, Any]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("products")
+                .select("id, product_name, product_code, npn")
+                .limit(5000)
+            )
+        )
+        return [
+            {
+                "id": str(row.get("id") or ""),
+                "name": row.get("product_name"),
+                "productName": row.get("product_name"),
+                "productCode": row.get("product_code"),
+                "npn": row.get("npn"),
+            }
+            for row in rows
+        ]
+
+    @classmethod
     def _row_by_id(cls, item_id: str) -> dict[str, Any] | None:
         return db.one(
             db.execute(
@@ -159,6 +180,11 @@ class MixingService(MixingRules):
                 "location": row.get("location_text") or snapshot.get("location") or "",
                 "rackNo": row.get("location_text") or snapshot.get("rackNo") or "",
                 "totalKgInMixing": db.as_float(row.get("total_kg_in_mixing")),
+                "existingMixedPowderId": (
+                    str(row["existing_mixed_powder_id"])
+                    if row.get("existing_mixed_powder_id")
+                    else snapshot.get("existingMixedPowderId") or ""
+                ),
                 "existingMixedPowderUsedKg": db.as_float(row.get("existing_mixed_powder_used_kg")),
                 "freshMixingRequiredKg": db.as_float(row.get("fresh_mixing_required_kg")),
                 "calculatedFreshRawMaterialsTotalKg": db.as_float(
@@ -272,6 +298,7 @@ class MixingService(MixingRules):
                         "mixing_id": mixing_id,
                         "ingredient_type": ingredient_type,
                         "raw_material_id": row.get("rawMaterialId") or None,
+                        "raw_material_category_id": row.get("rmCategoryId") or None,
                         "raw_material_name": (
                             row.get("rawMaterialName")
                             or row.get("rawMaterial")
@@ -455,7 +482,7 @@ class MixingService(MixingRules):
         available = db.get_inventory_quantity(inventory_item_id=item_id, inventory_lot_id=lot_id)
         if qty > available:
             raise ServiceError(
-                "Cannot edit or delete this mixing because NJP has already consumed its powder.",
+                "Cannot edit or delete this mixing because Encapsulation has already consumed its powder.",
                 409,
             )
         db.inventory_movement(
@@ -507,6 +534,19 @@ class MixingService(MixingRules):
             500,
         )
         mixing_id = str(created["id"])
+        if not cleaned.get("mixingCode"):
+            generated_code = cls._format_mixing_code(
+                product=cls._product_by_id(cleaned.get("productId")),
+                number=created.get("mixing_number"),
+                products=cls._product_code_products(),
+            )
+            db.execute(
+                db.client()
+                .table("mixings")
+                .update({"mixing_code": generated_code})
+                .eq("id", mixing_id)
+            )
+            created["mixing_code"] = generated_code
         record = {**cleaned, "id": mixing_id, "mixingCode": created.get("mixing_code")}
         source_lot_id = cls._consume_existing_powder(record, entity_id=mixing_id)
         cls._consume_raw_materials(record, entity_id=mixing_id)
@@ -527,6 +567,7 @@ class MixingService(MixingRules):
                     "output_inventory_item_id": item_id,
                     "output_inventory_lot_id": lot_id,
                     "existing_mixed_powder_lot_id": source_lot_id,
+                    "existing_mixed_powder_id": record.get("existingMixedPowderId") or None,
                     "record_snapshot": to_json_value(record),
                 }
             )
@@ -569,6 +610,7 @@ class MixingService(MixingRules):
                     "location_text": record.get("location") or record.get("rackNo"),
                     "total_kg_in_mixing": db.decimal_str(record.get("totalKgInMixing")),
                     "existing_mixed_powder_lot_id": source_lot_id,
+                    "existing_mixed_powder_id": record.get("existingMixedPowderId") or None,
                     "existing_mixed_powder_used_kg": db.decimal_str(
                         record.get("existingMixedPowderUsedKg")
                     ),
@@ -595,9 +637,15 @@ class MixingService(MixingRules):
     def delete(cls, item_id: str) -> dict[str, Any]:
         row = db.require_row(cls._row_by_id(item_id), "Mixing record not found")
         if db.one(
-            db.execute(db.client().table("njp_runs").select("id").eq("mixing_id", item_id).limit(1))
+            db.execute(
+                db.client()
+                .table("encapsulations")
+                .select("id")
+                .eq("mixing_id", item_id)
+                .limit(1)
+            )
         ):
-            raise ServiceError("Cannot delete mixing because NJP records use it.", 409)
+            raise ServiceError("Cannot delete mixing because Encapsulation records use it.", 409)
         previous = cls._db_to_app(row)
         cls._reverse_output(row, previous)
         cls._restore_existing_powder(previous, entity_id=item_id)

@@ -31,6 +31,8 @@ class BrandService(TableService):
                 )
         for key in (
             "shortName",
+            "contactName",
+            "contactEmail",
             "addressLine1",
             "addressLine2",
             "city",
@@ -110,21 +112,33 @@ class BrandService(TableService):
 
     @staticmethod
     def _db_to_app(row: dict[str, Any]) -> dict[str, Any]:
+        metadata = row.get("metadata") or {}
+
+        def value(column: str, metadata_key: str | None = None, default: Any = None) -> Any:
+            raw = row.get(column)
+            if raw not in (None, ""):
+                return raw
+            if metadata_key:
+                return metadata.get(metadata_key, default)
+            return default
+
         return {
             "id": str(row["id"]),
             "name": row.get("name"),
             "codePrefix": row.get("code_prefix"),
             "code_prefix": row.get("code_prefix"),
-            "shortName": (row.get("metadata") or {}).get("shortName"),
-            "addressLine1": (row.get("metadata") or {}).get("addressLine1"),
-            "addressLine2": (row.get("metadata") or {}).get("addressLine2"),
-            "city": (row.get("metadata") or {}).get("city"),
-            "province": (row.get("metadata") or {}).get("province"),
-            "country": (row.get("metadata") or {}).get("country"),
-            "phone": row.get("contact_phone") or (row.get("metadata") or {}).get("phone"),
+            "shortName": value("short_name", "shortName"),
+            "contactName": value("contact_name", "contactName"),
+            "contactEmail": value("contact_email", "contactEmail"),
+            "addressLine1": value("address_line_1", "addressLine1") or row.get("address"),
+            "addressLine2": value("address_line_2", "addressLine2"),
+            "city": value("city", "city"),
+            "province": value("province", "province"),
+            "country": value("country", "country"),
+            "phone": value("contact_phone", "phone"),
             "notes": row.get("notes"),
-            "logoUrl": (row.get("metadata") or {}).get("logoUrl"),
-            "color": (row.get("metadata") or {}).get("color") or "#16a34a",
+            "logoUrl": value("logo_url", "logoUrl"),
+            "color": value("brand_color", "color", "#16a34a") or "#16a34a",
             "isActive": row.get("is_active", True),
             "createdAt": db.timestamp_ms(row.get("created_at")),
             "updatedAt": db.timestamp_ms(row.get("updated_at")),
@@ -136,6 +150,8 @@ class BrandService(TableService):
     def _db_payload(cls, normalized: dict[str, Any]) -> dict[str, Any]:
         metadata_keys = (
             "shortName",
+            "contactName",
+            "contactEmail",
             "addressLine1",
             "addressLine2",
             "city",
@@ -148,15 +164,35 @@ class BrandService(TableService):
         metadata = {
             key: normalized.get(key)
             for key in metadata_keys
-            if key in normalized and normalized.get(key) is not None
+            if key in normalized
         }
         payload: dict[str, Any] = {}
         if "name" in normalized:
             payload["name"] = normalized["name"]
         if "codePrefix" in normalized:
             payload["code_prefix"] = normalized["codePrefix"]
+        if "shortName" in normalized:
+            payload["short_name"] = normalized.get("shortName")
+        if "contactName" in normalized:
+            payload["contact_name"] = normalized.get("contactName")
+        if "contactEmail" in normalized:
+            payload["contact_email"] = normalized.get("contactEmail")
+        if "addressLine1" in normalized:
+            payload["address_line_1"] = normalized.get("addressLine1")
+        if "addressLine2" in normalized:
+            payload["address_line_2"] = normalized.get("addressLine2")
+        if "city" in normalized:
+            payload["city"] = normalized.get("city")
+        if "province" in normalized:
+            payload["province"] = normalized.get("province")
+        if "country" in normalized:
+            payload["country"] = normalized.get("country")
         if "phone" in normalized:
             payload["contact_phone"] = normalized.get("phone")
+        if "logoUrl" in normalized:
+            payload["logo_url"] = normalized.get("logoUrl")
+        if "color" in normalized:
+            payload["brand_color"] = normalized.get("color") or "#16a34a"
         if "addressLine1" in normalized or "addressLine2" in normalized:
             payload["address"] = " ".join(
                 item

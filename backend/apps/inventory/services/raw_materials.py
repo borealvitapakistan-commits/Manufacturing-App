@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from services import db
@@ -56,7 +57,7 @@ class RawMaterialService(TableService):
             normalized["name"] = str(normalized["name"] or "").strip()
             if not normalized["name"]:
                 raise ServiceError("Material name is required", 400)
-        for key in ("code", "category", "location", "coaLink", "comments"):
+        for key in ("code", "category", "location", "coaLink", "comments", "potency"):
             if key in normalized:
                 normalized[key] = str(normalized[key] or "").strip() or None
         if "categoryId" in normalized:
@@ -154,7 +155,12 @@ class RawMaterialService(TableService):
             )
         ):
             raise ServiceError("Cannot delete raw material used in products", 409)
-        db.execute(db.client().table("inventory_items").update({"is_active": False}).eq("id", item_id))
+        db.execute(
+            db.client()
+            .table("inventory_items")
+            .update({"is_active": False, "item_code": None})
+            .eq("id", item_id)
+        )
         return None
 
     @classmethod
@@ -166,11 +172,72 @@ class RawMaterialService(TableService):
                 .table("inventory_items")
                 .select("*")
                 .eq("item_kind", "raw_material")
+                .eq("is_active", True)
                 .order("item_name")
                 .limit(limit)
             )
         )
-        return [cls._db_to_app(row) for row in rows]
+        return cls._db_to_app_bulk(rows)
+
+    @classmethod
+    def _db_to_app_bulk(cls, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Same output as calling _db_to_app per row, but with the three
+        related lookups (detail, category, quantity) each batched into a
+        single query instead of N+1 - listing raw materials was issuing
+        2-3 sequential round trips to Supabase per row, slow enough to
+        occasionally time out callers that load raw materials alongside
+        other data (e.g. the Products page).
+        """
+        item_ids = [str(item["id"]) for item in items]
+        if not item_ids:
+            return []
+
+        details = db.data(
+            db.execute(
+                db.client().table("raw_materials").select("*").in_("inventory_item_id", item_ids)
+            )
+        )
+        detail_by_item = {str(detail["inventory_item_id"]): detail for detail in details}
+
+        category_ids = {detail["category_id"] for detail in details if detail.get("category_id")}
+        categories = (
+            db.data(
+                db.execute(
+                    db.client()
+                    .table("raw_material_categories")
+                    .select("id, name, is_nmi_category")
+                    .in_("id", list(category_ids))
+                )
+            )
+            if category_ids
+            else []
+        )
+        category_by_id = {str(category["id"]): category for category in categories}
+
+        balances = db.data(
+            db.execute(
+                db.client()
+                .table("inventory_balances")
+                .select("inventory_item_id, quantity")
+                .in_("inventory_item_id", item_ids)
+            )
+        )
+        quantity_by_item: dict[str, Decimal] = {}
+        for balance in balances:
+            key = str(balance["inventory_item_id"])
+            quantity_by_item[key] = quantity_by_item.get(key, Decimal("0")) + db.as_decimal(
+                balance.get("quantity")
+            )
+
+        return [
+            cls._assemble_row(
+                item,
+                detail_by_item.get(str(item["id"]), {}),
+                category_by_id,
+                quantity_by_item.get(str(item["id"]), Decimal("0")),
+            )
+            for item in items
+        ]
 
     @classmethod
     def _db_get(cls, item_id: str) -> dict[str, Any]:
@@ -201,18 +268,31 @@ class RawMaterialService(TableService):
                 .limit(1)
             )
         ) or {}
-        category = None
+        category_by_id: dict[str, Any] = {}
         if detail.get("category_id"):
             category = db.one(
                 db.execute(
                     db.client()
                     .table("raw_material_categories")
-                    .select("id, name, code")
+                    .select("id, name, is_nmi_category")
                     .eq("id", detail["category_id"])
                     .limit(1)
                 )
             )
+            if category:
+                category_by_id[str(category["id"])] = category
         quantity = db.get_inventory_quantity(inventory_item_id=item_id)
+        return cls._assemble_row(item, detail, category_by_id, quantity)
+
+    @staticmethod
+    def _assemble_row(
+        item: dict[str, Any],
+        detail: dict[str, Any],
+        category_by_id: dict[str, Any],
+        quantity: Decimal,
+    ) -> dict[str, Any]:
+        item_id = str(item["id"])
+        category = category_by_id.get(str(detail.get("category_id"))) if detail.get("category_id") else None
         metadata = item.get("metadata") or {}
         row = {
             "id": item_id,
@@ -226,6 +306,7 @@ class RawMaterialService(TableService):
             "price_per_kg": db.as_float(detail.get("price_per_kg_usd")),
             "coaLink": detail.get("coa_reference"),
             "comments": detail.get("comments"),
+            "potency": detail.get("potency"),
             "qtyKg": float(quantity),
             "qty_kg": float(quantity),
             "qty": float(quantity),
@@ -234,7 +315,7 @@ class RawMaterialService(TableService):
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
-        return cls.with_qty_alias(row)
+        return RawMaterialService.with_qty_alias(row)
 
     @classmethod
     def _db_create(cls, normalized: dict[str, Any]) -> dict[str, Any]:
@@ -256,6 +337,7 @@ class RawMaterialService(TableService):
                     "price_per_kg_usd": db.decimal_str(normalized.get("pricePerKg")),
                     "coa_reference": normalized.get("coaLink"),
                     "comments": normalized.get("comments"),
+                    "potency": normalized.get("potency"),
                 }
             )
         )
@@ -320,9 +402,14 @@ class RawMaterialService(TableService):
             detail_payload["coa_reference"] = normalized.get("coaLink")
         if "comments" in normalized:
             detail_payload["comments"] = normalized.get("comments")
+        if "potency" in normalized:
+            detail_payload["potency"] = normalized.get("potency")
         if detail_payload:
             db.execute(
-                db.client().table("raw_materials").update(detail_payload).eq("inventory_item_id", item_id)
+                db.client()
+                .table("raw_materials")
+                .update(detail_payload)
+                .eq("inventory_item_id", item_id)
             )
         if "qtyKg" in normalized or "qty" in normalized:
             cls.update_stock(item_id, float(normalized.get("qtyKg") or normalized.get("qty") or 0))
@@ -339,30 +426,51 @@ class RawMaterialCategoryService(TableService):
         return super().list(**kwargs)
 
     @staticmethod
+    def _as_bool(value: Any, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
     def normalize_payload(payload: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
-        normalized = dict(payload)
-        if "name" in normalized:
-            normalized["name"] = str(normalized["name"] or "").strip()
+        normalized: dict[str, Any] = {}
+        if "name" in payload:
+            normalized["name"] = str(payload.get("name") or "").strip()
             if not normalized["name"]:
                 raise ServiceError("Category name is required", 400)
         elif not partial:
             raise ServiceError("Category name is required", 400)
-        if "description" in normalized:
-            normalized["description"] = str(normalized["description"] or "").strip() or None
-        if not partial:
-            normalized.setdefault("isActive", True)
+
+        if "description" in payload:
+            normalized["description"] = str(payload.get("description") or "").strip() or None
+
+        if not partial or "isActive" in payload or "is_active" in payload:
+            normalized["isActive"] = RawMaterialCategoryService._as_bool(
+                payload.get("isActive", payload.get("is_active")),
+                True,
+            )
+
+        if not partial or "isNmiCategory" in payload or "is_nmi_category" in payload:
+            normalized["isNmiCategory"] = RawMaterialCategoryService._as_bool(
+                payload.get("isNmiCategory", payload.get("is_nmi_category")),
+                False,
+            )
+
+        if "metadata" in payload:
+            metadata = payload.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                raise ServiceError("Category metadata must be a JSON object", 400)
+            normalized["metadata"] = db.json_safe(metadata)
+        elif not partial:
+            normalized["metadata"] = {}
+
         return normalized
 
     @classmethod
     def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        normalized = cls.normalize_payload(payload)
-        normalized["code"] = (
-            str(payload.get("code") or normalized.get("name") or "")
-            .strip()
-            .upper()
-            .replace(" ", "_")
-        )
-        return super().create(normalized)
+        return super().create(cls.normalize_payload(payload))
 
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -375,7 +483,7 @@ class RawMaterialCategoryService(TableService):
             response = (
                 cls.client()
                 .table("raw_materials")
-                .select("id")
+                .select("inventory_item_id")
                 .eq("category_id", item_id)
                 .limit(1)
                 .execute()

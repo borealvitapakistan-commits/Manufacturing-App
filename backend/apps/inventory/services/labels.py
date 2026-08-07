@@ -173,7 +173,7 @@ class LabelService(TableService):
     @classmethod
     def _db_to_app(cls, row: dict[str, Any]) -> dict[str, Any]:
         item = row.get("inventory_items") or {}
-        item_id = str(row.get("inventory_item_id"))
+        item_id = str(row.get("inventory_item_id") or row.get("id") or item.get("id"))
         quantity = int(db.get_inventory_quantity(inventory_item_id=item_id))
         product_name = cls._name_lookup("products", row.get("product_id"), "product_name")
         brand_name = cls._name_lookup("brands", row.get("brand_id"), "name")
@@ -276,7 +276,12 @@ class LabelService(TableService):
             spec_payload["notes"] = normalized.get("notes")
         if spec_payload:
             spec_payload["metadata"] = db.json_safe({**current, **normalized})
-            db.execute(db.client().table("label_specs").update(spec_payload).eq("inventory_item_id", item_id))
+            db.execute(
+                db.client()
+                .table("label_specs")
+                .update(spec_payload)
+                .eq("inventory_item_id", item_id)
+            )
 
         item_payload = {}
         if any(key in normalized for key in ("brandName", "productName", "labelName", "dosageType")):

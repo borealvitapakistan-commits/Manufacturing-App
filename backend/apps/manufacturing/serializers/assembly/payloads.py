@@ -12,7 +12,9 @@ class AssemblySerializer(serializers.Serializer):
         default=list,
     )
 
-    # Local Assembly is created from a saved standalone NJP capsule record.
+    # Local Assembly is created from a saved standalone Encapsulation capsule record.
+    encapsulationId = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    encapsulationCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     njpId = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     njpCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     mixingId = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -64,6 +66,10 @@ class AssemblySerializer(serializers.Serializer):
         min_value=0,
         required=False,
         allow_null=True,
+    )
+    weightUnit = serializers.ChoiceField(
+        choices=["g", "mg"],
+        required=False,
     )
 
     capsulesReceivedKg = serializers.DecimalField(
@@ -174,6 +180,21 @@ class AssemblySerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    # Bottle Quantity is the primary user-entered field going forward;
+    # totalBottlesMade is kept as a fallback alias for older payloads.
+    bottleQuantity = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True,
+    )
+    # Total Units Used is always server-computed (bottleQuantity *
+    # capsulesPerBottle) - accepted here only so it round-trips in
+    # responses; any client-sent value is recomputed, never trusted.
+    totalUnitsUsed = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        allow_null=True,
+    )
     bottleCC = serializers.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -182,7 +203,14 @@ class AssemblySerializer(serializers.Serializer):
         allow_null=True,
     )
     capsulesPerBottle = serializers.IntegerField(
-        min_value=0,
+        min_value=1,
+        required=False,
+        allow_null=True,
+    )
+    # unitsPerBottle is the same field as capsulesPerBottle, displayed under
+    # a different label for non-capsule products (tablets, softgel, etc.).
+    unitsPerBottle = serializers.IntegerField(
+        min_value=1,
         required=False,
         allow_null=True,
     )

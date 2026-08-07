@@ -12,14 +12,16 @@ from services.base_service import ServiceError
 from services.converters import to_json_value
 
 
-class NJPRules:
+class EncapsulationRules:
     EMPTY_CAPSULE_UNIT_WEIGHT_MG = 123
     STATUS_MAP = {
         "": "",
         "underprocess": "Underprocess",
         "in njp": "Underprocess",
+        "in encapsulation": "Underprocess",
         "completed": "Completed",
         "njp completed": "Completed",
+        "encapsulation completed": "Completed",
     }
 
     @staticmethod
@@ -37,7 +39,7 @@ class NJPRules:
         try:
             return round(float(value), 6)
         except (TypeError, ValueError):
-            raise ServiceError("Invalid numeric value in NJP record", 400)
+            raise ServiceError("Invalid numeric value in Encapsulation record", 400)
 
     @classmethod
     def _as_int_or_none(cls, value: Any) -> int | None:
@@ -170,33 +172,112 @@ class NJPRules:
             unit_weight_mg,
         )
 
+    @staticmethod
+    def _code_word(value: Any) -> str:
+        return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
+
     @classmethod
-    def _next_code(cls, records: list[dict[str, Any]]) -> str:
+    def _product_display_name(cls, product: dict[str, Any] | None) -> str:
+        product = product or {}
+        return cls._as_text(
+            product.get("name")
+            or product.get("productName")
+            or product.get("product_name")
+            or product.get("productCode")
+            or product.get("product_code")
+            or product.get("code")
+            or product.get("npn")
+            or "PRO"
+        )
+
+    @classmethod
+    def _product_code_products(cls) -> list[dict[str, Any]]:
+        return []
+
+    @classmethod
+    def _product_code_prefix(
+        cls,
+        product: dict[str, Any] | None,
+        products: list[dict[str, Any]] | None = None,
+    ) -> str:
+        product = product or {}
+        products = products or []
+        product_id = cls._as_text(product.get("id"))
+        words = [cls._code_word(word) for word in cls._product_display_name(product).split()]
+        words = [word for word in words if word]
+        first_word = words[0] if words else "PRO"
+        base_prefix = (first_word[:3] + "XXX")[:3]
+
+        has_first_word_collision = False
+        for other in products:
+            other_id = cls._as_text(other.get("id"))
+            if product_id and other_id == product_id:
+                continue
+            other_words = [cls._code_word(word) for word in cls._product_display_name(other).split()]
+            other_words = [word for word in other_words if word]
+            other_first_word = other_words[0] if other_words else ""
+            if (other_first_word[:3] + "XXX")[:3] == base_prefix:
+                has_first_word_collision = True
+                break
+
+        if has_first_word_collision:
+            suffix_letter = words[1][:1] if len(words) > 1 else first_word[2:3]
+            return (first_word[:2] + (suffix_letter or "X") + "XXX")[:3]
+
+        return base_prefix
+
+    @staticmethod
+    def _encapsulation_code_number(value: Any) -> int | None:
+        text = str(value or "").strip().upper()
+        if not text:
+            return None
+        if text.startswith("NJP-") or text.startswith("E-"):
+            suffix = text.rsplit("-", 1)[-1]
+        else:
+            return None
+        return int(suffix) if suffix.isdigit() else None
+
+    @classmethod
+    def _next_code(
+        cls,
+        records: list[dict[str, Any]],
+        *,
+        product: dict[str, Any] | None = None,
+        products: list[dict[str, Any]] | None = None,
+    ) -> str:
         highest = 0
         for record in records:
-            code = str(record.get("njpCode") or "")
-            if code.startswith("NJP-") and code[4:].isdigit():
-                highest = max(highest, int(code[4:]))
-        return f"NJP-{highest + 1:04d}"
+            for key in ("encapsulationCode", "njpCode"):
+                number = cls._encapsulation_code_number(record.get(key))
+                if number is not None:
+                    highest = max(highest, number)
+
+        return f"E-{cls._product_code_prefix(product, products or cls._product_code_products())}-{highest + 1:03d}"
 
     @staticmethod
     def _ensure_unique_code(
         records: list[dict[str, Any]],
-        njp_code: str,
+        encapsulation_code: str,
         *,
         current_id: str | None = None,
     ) -> None:
-        normalized = njp_code.strip().lower()
+        normalized = encapsulation_code.strip().lower()
+        if not normalized:
+            return
         for record in records:
             if current_id and str(record.get("id")) == current_id:
                 continue
-            if str(record.get("njpCode") or "").strip().lower() == normalized:
-                raise ServiceError("NJP code already exists", 409)
+            existing_codes = (
+                record.get("encapsulationCode"),
+                record.get("njpCode"),
+            )
+            if any(str(code or "").strip().lower() == normalized for code in existing_codes):
+                raise ServiceError("Encapsulation code already exists", 409)
 
     @classmethod
     def _find_mixing(cls, mixing_id: str) -> dict[str, Any]:
         raise ServiceError(
-            "Selected mixing was not found. Save the mixing first, then create NJP from it.",
+            "Selected mixing was not found. Save the mixing first, then create Encapsulation from it.",
             404,
         )
 
@@ -282,16 +363,52 @@ class NJPRules:
             row = dict(original or {})
             weights = []
             for key in ("w1Mg", "w2Mg", "w3Mg", "w4Mg", "w5Mg"):
-                value = row.get(key)
-                if value not in {None, ""}:
-                    weights.append(float(value))
+                value = cls._as_float_or_none(row.get(key))
+                if value is not None:
+                    weights.append(value)
 
-            row["avgWeightMg"] = round(sum(weights) / len(weights), 2) if weights else None
+            avg_mg = cls._as_float_or_none(
+                row.get("avgMg")
+                or row.get("avgWeightMg")
+                or row.get("averageWeightMg")
+            )
+            if avg_mg is None and weights:
+                avg_mg = round(sum(weights) / len(weights), 2)
+
+            normalized_row = {
+                **row,
+                "checkDate": row.get("checkDate") or row.get("date"),
+                "date": row.get("date") or row.get("checkDate"),
+                "checkTime": row.get("checkTime") or row.get("time"),
+                "time": row.get("time") or row.get("checkTime"),
+                "loadLabel": row.get("loadLabel") or row.get("load"),
+                "load": row.get("load") or row.get("loadLabel"),
+                "w1Mg": cls._as_float_or_none(row.get("w1Mg")),
+                "w2Mg": cls._as_float_or_none(row.get("w2Mg")),
+                "w3Mg": cls._as_float_or_none(row.get("w3Mg")),
+                "w4Mg": cls._as_float_or_none(row.get("w4Mg")),
+                "w5Mg": cls._as_float_or_none(row.get("w5Mg")),
+                "avgMg": avg_mg,
+                "avgWeightMg": avg_mg,
+                "averageWeightMg": avg_mg,
+                "sampleCount": cls._as_int_or_none(row.get("sampleCount")) or (len(weights) if weights else None),
+                "operatorName": cls._as_text(row.get("operatorName")),
+                "remarks": cls._as_text(row.get("remarks")),
+            }
             if any(
-                row.get(key) not in {None, ""}
-                for key in ("time", "loadLabel", "w1Mg", "w2Mg", "w3Mg", "w4Mg", "w5Mg")
+                normalized_row.get(key) not in {None, ""}
+                for key in (
+                    "checkDate",
+                    "checkTime",
+                    "loadLabel",
+                    "w1Mg",
+                    "w2Mg",
+                    "w3Mg",
+                    "w4Mg",
+                    "w5Mg",
+                )
             ):
-                normalized.append(to_json_value(row))
+                normalized.append(to_json_value(normalized_row))
 
         return normalized
 
@@ -302,14 +419,24 @@ class NJPRules:
         existing: dict[str, Any],
     ) -> list[dict[str, Any]]:
         source = None
-        for key in ("njpSessions", "njpTimeLogs", "timeLogs"):
+        for key in (
+            "encapsulationSessions",
+            "encapsulationTimeLogs",
+            "njpSessions",
+            "njpTimeLogs",
+            "timeLogs",
+        ):
             if key in payload:
                 source = payload.get(key)
                 break
 
         if source is None:
             if not any(key in payload for key in ("productionDate", "startDate", "startTime", "endDate", "endTime")):
-                return existing.get("njpSessions", []) or []
+                return (
+                    existing.get("encapsulationSessions")
+                    or existing.get("njpSessions")
+                    or []
+                )
 
             date = payload.get("productionDate") or payload.get("startDate")
             source = [
@@ -367,10 +494,18 @@ class NJPRules:
         return payload[key] if key in payload else existing.get(key, default)
 
     @classmethod
-    def _njp_usage(cls, record: dict[str, Any]) -> tuple[str, float]:
+    def _encapsulation_usage(cls, record: dict[str, Any]) -> tuple[str, float]:
         mixing_id = cls._as_text(record.get("mixingId"))
-        used_kg = cls._as_float_or_none(record.get("rawMaterialReceivedKg")) or 0
+        used_kg = (
+            cls._as_float_or_none(record.get("availableMixingUsedKg"))
+            or cls._as_float_or_none(record.get("mixingUsedInEncapsulationKg"))
+            or cls._as_float_or_none(record.get("rawMaterialReceivedKg"))
+            or cls._as_float_or_none(record.get("mixingUsedInNJPkg"))
+            or 0
+        )
         return mixing_id, float(used_kg)
+
+    _njp_usage = _encapsulation_usage
 
     @classmethod
     def _clean_payload(
@@ -389,15 +524,29 @@ class NJPRules:
             else existing.get("mixingId")
         )
         if not mixing_id:
-            raise ServiceError("Select the mixing that will be used for NJP.", 400)
+            raise ServiceError("Select the mixing that will be used for Encapsulation.", 400)
 
         mixing = cls._find_mixing(mixing_id)
         mixing_code = cls._as_text(mixing.get("mixingCode"))
         mixing_name = cls._mixing_name(mixing)
-        njp_code = cls._as_text(cls._pick(payload, existing, "njpCode", "")) or cls._next_code(records)
+        product = {
+            "id": mixing.get("productId") or mixing.get("product_id"),
+            "name": mixing.get("productName") or mixing.get("product_name") or mixing_name,
+            "productName": mixing.get("productName") or mixing.get("product_name") or mixing_name,
+            "product_name": mixing.get("product_name") or mixing.get("productName") or mixing_name,
+            "productCode": mixing.get("productCode") or mixing.get("product_code") or mixing.get("npn"),
+            "product_code": mixing.get("product_code") or mixing.get("productCode"),
+            "code": mixing.get("productCode") or mixing.get("product_code") or mixing.get("npn"),
+            "npn": mixing.get("npn"),
+        }
+        encapsulation_code = (
+            cls._as_text(cls._pick(payload, existing, "encapsulationCode", ""))
+            or cls._as_text(cls._pick(payload, existing, "njpCode", ""))
+            or cls._next_code(records, product=product, products=cls._product_code_products())
+        )
         cls._ensure_unique_code(
             records,
-            njp_code,
+            encapsulation_code,
             current_id=str(existing.get("id") or "") or None,
         )
 
@@ -542,12 +691,16 @@ class NJPRules:
             "bucket": bucket,
             "mixingTotalKg": round(cls._record_total_kg(mixing), 6),
             "mixingAvailableKg": round(cls._record_available_kg(mixing), 6),
+            "mixingAvailableBeforeEncapsulationKg": None,
+            "mixingUsedInEncapsulationKg": raw_material_received,
+            "mixingAvailableAfterEncapsulationKg": None,
             "mixingAvailableBeforeNJPkg": None,
             "mixingUsedInNJPkg": raw_material_received,
             "mixingAvailableAfterNJPkg": None,
             "sourceTargetFillWeightMg": source_target_fill_weight_mg,
             "targetFillWeightModified": target_modified,
-            "njpCode": njp_code,
+            "encapsulationCode": encapsulation_code,
+            "njpCode": encapsulation_code,
             "lotNumber": cls._pick(payload, existing, "lotNumber", mixing_code),
             "capsuleSize": cls._as_text(cls._pick(payload, existing, "capsuleSize", "00")) or "00",
             "machineModel": cls._pick(payload, existing, "machineModel"),
@@ -574,10 +727,14 @@ class NJPRules:
             "endDate": end_date,
             "endTime": end_time,
             "productionDate": production_date,
+            "encapsulationSessions": sessions,
+            "encapsulationTimeLogs": sessions,
             "njpSessions": sessions,
             "njpTimeLogs": sessions,
             "timeLogs": sessions,
             "status": status,
+            "encapsulationLoadChecks": load_checks,
+            "njpLoadChecks": load_checks,
             "loadChecks": load_checks,
             "remarks": cls._pick(payload, existing, "remarks"),
             "reason": cls._pick(payload, existing, "reason"),
@@ -598,6 +755,9 @@ class NJPRules:
                 "location": location,
                 "bucket": bucket,
                 "rawMaterialReceivedKg": raw_material_received,
+                "mixingAvailableBeforeEncapsulationKg": None,
+                "mixingUsedInEncapsulationKg": raw_material_received,
+                "mixingAvailableAfterEncapsulationKg": None,
                 "mixingAvailableBeforeNJPkg": None,
                 "mixingUsedInNJPkg": raw_material_received,
                 "mixingAvailableAfterNJPkg": None,
@@ -613,11 +773,18 @@ class NJPRules:
                 "rejectedCapsulesWeightKg": rejected_capsules_weight_kg,
                 "yieldPercent": yield_percent,
                 "temperatureF": temperature_f,
+                "encapsulationCode": encapsulation_code,
+                "njpCode": encapsulation_code,
+                "encapsulationSessions": sessions,
                 "njpSessions": sessions,
+                "encapsulationLoadChecks": load_checks,
+                "njpLoadChecks": load_checks,
                 "loadChecks": load_checks,
             },
         }
 
         return to_json_value(cleaned)
 
-__all__ = ["NJPRules"]
+NJPRules = EncapsulationRules
+
+__all__ = ["EncapsulationRules", "NJPRules"]

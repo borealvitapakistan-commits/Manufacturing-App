@@ -1,9 +1,10 @@
 from .assembly import AssemblyReportQuerySerializer
+from .encapsulation import EncapsulationReportQuerySerializer, NJPReportQuerySerializer
 from .mixing import MixingReportQuerySerializer
-from .njp import NJPReportQuerySerializer
 
 __all__ = [
     "AssemblyReportQuerySerializer",
+    "EncapsulationReportQuerySerializer",
     "MixingReportQuerySerializer",
     "NJPReportQuerySerializer",
 ]

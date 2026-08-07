@@ -16,11 +16,14 @@ import {
   fetchBottleLidInventory,
   fetchLabelInventory,
   fetchLocalAssembly,
-  fetchLocalNJPs,
+  fetchLocalEncapsulations,
   fetchProducts,
   saveLocalAssembly
 } from '@/lib/supabase/data'
-import type { Brand, Product } from '@/types'
+import type { Brand, Product, ProductType } from '@/types'
+
+const weightUnits = ['g', 'mg'] as const
+type WeightUnit = (typeof weightUnits)[number]
 
 interface LocalBrandRef {
   id?: string | null
@@ -39,9 +42,9 @@ interface BrandBatchCode {
   assemblyCode?: string | null
 }
 
-interface LocalNJPRecord {
+interface LocalEncapsulationRecord {
   id: string
-  njpCode?: string | null
+  encapsulationCode?: string | null
   mixingCode?: string | null
   mixingName?: string | null
   brandId?: string | null
@@ -75,7 +78,7 @@ interface LocalAssemblyRecord {
   batchCode?: string | null
   batchCodeDisplay?: string | null
   brandBatchCodes?: BrandBatchCode[] | null
-  njpId?: string | null
+  encapsulationId?: string | null
   brandId?: string | null
   brandName?: string | null
   brandIds?: string[] | null
@@ -89,11 +92,15 @@ interface LocalAssemblyRecord {
   boxNo?: string | null
   capsuleWeightMg?: number | string | null
   capsulesReceivedQty?: number | string | null
+  totalUnitsUsed?: number | string | null
   capsulesReceivedKg?: number | string | null
   bottleCC?: number | string | null
   filledBottleWeight?: number | string | null
+  weightUnit?: WeightUnit | null
   capsulesPerBottle?: number | string | null
+  unitsPerBottle?: number | string | null
   totalBottlesMade?: number | string | null
+  bottleQuantity?: number | string | null
   looseCapsulesQty?: number | string | null
   remainingCapsulesAfterBottlingQty?: number | string | null
   bottleLidId?: string | null
@@ -162,17 +169,19 @@ interface AssemblyTimeLogSource {
 
 interface AssemblyForm {
   assemblyCode: string
+  batchCode: string
   brandId: string
   productId: string
-  njpId: string
+  encapsulationId: string
   bottleLidId: string
   location: string
   boxNo: string
   capsuleWeightMg: string
-  capsulesReceivedQty: string
   bottleCC: string
   filledBottleWeight: string
+  weightUnit: WeightUnit
   capsulesPerBottle: string
+  bottleQuantity: string
   labelId: string
   productionDate: string
   expiryDate: string
@@ -245,7 +254,7 @@ function formatNumber(value: number | string | null | undefined, decimals = 4): 
   return number === null ? '-' : number.toFixed(decimals)
 }
 
-function totalCapsulesFromNJP(record: LocalNJPRecord | null | undefined): number {
+function totalCapsulesFromEncapsulation(record: LocalEncapsulationRecord | null | undefined): number {
   if (!record) return 0
   return Number(
     record.totalCapsulesFilledQty ??
@@ -255,13 +264,13 @@ function totalCapsulesFromNJP(record: LocalNJPRecord | null | undefined): number
   ) || 0
 }
 
-function availableCapsulesFromNJP(record: LocalNJPRecord | null | undefined): number {
+function availableCapsulesFromEncapsulation(record: LocalEncapsulationRecord | null | undefined): number {
   if (!record) return 0
   return Number(
     record.availableCapsulesQty ??
     record.remainingCapsulesQty ??
     record.availableCapsuleQty ??
-    totalCapsulesFromNJP(record)
+    totalCapsulesFromEncapsulation(record)
   ) || 0
 }
 
@@ -301,7 +310,17 @@ function labelOptionLabel(record: LabelInventoryRecord): string {
   return `${name}${dosage} (${labelQuantity(record)} available)`
 }
 
-function capsuleWeightMgFromNJP(record: LocalNJPRecord | null | undefined): number {
+function labelDosageCount(record: LabelInventoryRecord | null | undefined): number | null {
+  if (!record?.dosageType) return null
+  const dosage = Number(record.dosageType)
+  return Number.isFinite(dosage) && dosage > 0 ? dosage : null
+}
+
+function unitsPerBottleLabel(productType: ProductType | undefined | null): string {
+  return productType && productType !== 'capsule' ? 'Units per Bottle' : 'Capsules per Bottle'
+}
+
+function capsuleWeightMgFromEncapsulation(record: LocalEncapsulationRecord | null | undefined): number {
   if (!record) return 0
   const explicit = Number(record.capsuleWeightMg ?? record.capsuleWeight ?? 0)
   if (Number.isFinite(explicit) && explicit > 0) return explicit
@@ -311,7 +330,7 @@ function capsuleWeightMgFromNJP(record: LocalNJPRecord | null | undefined): numb
   if (target > 0 || empty > 0) return target + empty
 
   const producedKg = Number(record.totalCapsulesProducedKg ?? 0) || 0
-  const count = totalCapsulesFromNJP(record)
+  const count = totalCapsulesFromEncapsulation(record)
   return producedKg > 0 && count > 0 ? (producedKg * 1_000_000) / count : 0
 }
 
@@ -320,10 +339,10 @@ function capsulesKg(capsulesQty: number | null, capsuleWeightMg: number | null):
   return Math.round(((capsulesQty * capsuleWeightMg) / 1_000_000) * 1_000_000) / 1_000_000
 }
 
-function njpOptionLabel(record: LocalNJPRecord): string {
-  const code = record.njpCode || 'No NJP code'
+function encapsulationOptionLabel(record: LocalEncapsulationRecord): string {
+  const code = record.encapsulationCode || 'No Encapsulation code'
   const product = record.productName || record.mixingName || 'Capsules'
-  const available = availableCapsulesFromNJP(record)
+  const available = availableCapsulesFromEncapsulation(record)
   return `${code} - ${product} (${available} capsules available)`
 }
 
@@ -341,7 +360,7 @@ function productOptionLabel(product: Product): string {
   return code ? `${product.name} (${code})` : product.name
 }
 
-function normalizeBrandRefsFromNJP(record: LocalNJPRecord | null | undefined): LocalBrandRef[] {
+function normalizeBrandRefsFromEncapsulation(record: LocalEncapsulationRecord | null | undefined): LocalBrandRef[] {
   if (!record) return []
   const refs: LocalBrandRef[] = []
   ;(record.brands || []).forEach(brand => refs.push(brand))
@@ -367,21 +386,21 @@ function normalizeBrandRefsFromNJP(record: LocalNJPRecord | null | undefined): L
     })
 }
 
-function njpHasBrand(record: LocalNJPRecord, brandId: string): boolean {
+function encapsulationHasBrand(record: LocalEncapsulationRecord, brandId: string): boolean {
   if (!brandId) return true
-  return normalizeBrandRefsFromNJP(record).some(brand => brand.id === brandId || brand.brandId === brandId)
+  return normalizeBrandRefsFromEncapsulation(record).some(brand => brand.id === brandId || brand.brandId === brandId)
 }
 
-function brandNamesFromNJP(record: LocalNJPRecord | null | undefined): string {
-  const names = normalizeBrandRefsFromNJP(record)
+function brandNamesFromEncapsulation(record: LocalEncapsulationRecord | null | undefined): string {
+  const names = normalizeBrandRefsFromEncapsulation(record)
     .map(brand => String(brand.name || brand.brandName || '').trim())
     .filter(Boolean)
   return names.length ? names.join(', ') : String(record?.brandName || '').trim()
 }
 
-function batchCodeLines(record: LocalAssemblyRecord | null | undefined, selectedNJP: LocalNJPRecord | null): BrandBatchCode[] {
+function batchCodeLines(record: LocalAssemblyRecord | null | undefined, selectedEncapsulation: LocalEncapsulationRecord | null): BrandBatchCode[] {
   if (record?.brandBatchCodes?.length) return record.brandBatchCodes
-  const refs = normalizeBrandRefsFromNJP(selectedNJP)
+  const refs = normalizeBrandRefsFromEncapsulation(selectedEncapsulation)
   if (refs.length <= 1) return []
   return refs.map(brand => ({
     brandId: brand.id || brand.brandId || '',
@@ -403,17 +422,19 @@ function emptyTimeLog(): AssemblyTimeLogForm {
 function emptyForm(): AssemblyForm {
   return {
     assemblyCode: '',
+    batchCode: '',
     brandId: '',
     productId: '',
-    njpId: '',
+    encapsulationId: '',
     bottleLidId: '',
     location: '',
     boxNo: '',
     capsuleWeightMg: '',
-    capsulesReceivedQty: '',
     bottleCC: '',
     filledBottleWeight: '',
+    weightUnit: 'g',
     capsulesPerBottle: '',
+    bottleQuantity: '',
     labelId: '',
     productionDate: todayInput(),
     expiryDate: '',
@@ -463,7 +484,7 @@ export default function AssemblyCreatePage() {
   const [error, setError] = useState('')
   const [brands, setBrands] = useState<Brand[]>([])
   const [products, setProducts] = useState<Product[]>([])
-  const [njpRows, setNjpRows] = useState<LocalNJPRecord[]>([])
+  const [encapsulationRows, setEncapsulationRows] = useState<LocalEncapsulationRecord[]>([])
   const [bottleLids, setBottleLids] = useState<BottleLidRecord[]>([])
   const [labels, setLabels] = useState<LabelInventoryRecord[]>([])
   const [editingRecord, setEditingRecord] = useState<LocalAssemblyRecord | null>(null)
@@ -473,53 +494,59 @@ export default function AssemblyCreatePage() {
   const availableProducts = useMemo(() => {
     if (!form.brandId) return []
     const productIds = new Set(
-      njpRows
-        .filter(row => njpHasBrand(row, form.brandId) && row.productId)
+      encapsulationRows
+        .filter(row => encapsulationHasBrand(row, form.brandId) && row.productId)
         .map(row => row.productId as string)
     )
     return products.filter(product => productIds.has(product.id))
-  }, [form.brandId, njpRows, products])
+  }, [form.brandId, encapsulationRows, products])
 
-  const availableNJPs = useMemo(
-    () => njpRows.filter(row => (
-      (!form.brandId || njpHasBrand(row, form.brandId)) &&
+  const availableEncapsulations = useMemo(
+    () => encapsulationRows.filter(row => (
+      (!form.brandId || encapsulationHasBrand(row, form.brandId)) &&
       (!form.productId || row.productId === form.productId)
     )),
-    [form.brandId, form.productId, njpRows]
+    [form.brandId, form.productId, encapsulationRows]
   )
 
-  const selectedNJP = useMemo(
-    () => njpRows.find(item => item.id === form.njpId) || null,
-    [form.njpId, njpRows]
+  const selectedEncapsulation = useMemo(
+    () => encapsulationRows.find(item => item.id === form.encapsulationId) || null,
+    [form.encapsulationId, encapsulationRows]
   )
-  const selectedNJPBrandRefs = useMemo(
-    () => normalizeBrandRefsFromNJP(selectedNJP),
-    [selectedNJP]
+  const selectedEncapsulationBrandRefs = useMemo(
+    () => normalizeBrandRefsFromEncapsulation(selectedEncapsulation),
+    [selectedEncapsulation]
   )
-  const selectedNJPIsMultiBrand = selectedNJPBrandRefs.length > 1
+  const selectedEncapsulationIsMultiBrand = selectedEncapsulationBrandRefs.length > 1
   const visibleBatchCodeLines = useMemo(
-    () => batchCodeLines(editingRecord, selectedNJP),
-    [editingRecord, selectedNJP]
+    () => batchCodeLines(editingRecord, selectedEncapsulation),
+    [editingRecord, selectedEncapsulation]
   )
-  const selectedNJPAvailable = useMemo(
-    () => availableCapsulesFromNJP(selectedNJP),
-    [selectedNJP]
+  const selectedEncapsulationAvailable = useMemo(
+    () => availableCapsulesFromEncapsulation(selectedEncapsulation),
+    [selectedEncapsulation]
   )
-  const previousUsageForSameNJP = useMemo(() => {
-    if (!editingRecord || !selectedNJP || editingRecord.njpId !== selectedNJP.id) return 0
-    return Number(editingRecord.capsulesReceivedQty || 0) || 0
-  }, [editingRecord, selectedNJP])
-  const availableForThisSave = selectedNJPAvailable + previousUsageForSameNJP
-  const capsulesReceivedQty = integerOrNull(form.capsulesReceivedQty)
+  const previousUsageForSameEncapsulation = useMemo(() => {
+    if (!editingRecord || !selectedEncapsulation || editingRecord.encapsulationId !== selectedEncapsulation.id) return 0
+    return Number(editingRecord.totalUnitsUsed ?? editingRecord.capsulesReceivedQty ?? 0) || 0
+  }, [editingRecord, selectedEncapsulation])
+  const availableForThisSave = selectedEncapsulationAvailable + previousUsageForSameEncapsulation
+  const selectedProduct = useMemo(
+    () => products.find(product => product.id === form.productId) || null,
+    [products, form.productId]
+  )
   const capsuleWeightMg = numOrNull(form.capsuleWeightMg)
-  const calculatedCapsulesKg = capsulesKg(capsulesReceivedQty, capsuleWeightMg)
   const capsulesPerBottle = integerOrNull(form.capsulesPerBottle)
-  const calculatedBottles = capsulesReceivedQty !== null && capsulesPerBottle && capsulesPerBottle > 0
-    ? Math.floor(capsulesReceivedQty / capsulesPerBottle)
+  // Bottle Quantity is the primary input: the operator says how many bottles
+  // to fill, and Total Units Used (what gets deducted from the selected
+  // Encapsulation) is calculated from it - not the other way around. This
+  // also means Assembly does not have to use every capsule the Encapsulation
+  // produced; whatever is not used stays available for a later Assembly.
+  const bottleQuantity = integerOrNull(form.bottleQuantity)
+  const totalUnitsUsed = bottleQuantity !== null && capsulesPerBottle
+    ? bottleQuantity * capsulesPerBottle
     : null
-  const looseCapsules = capsulesReceivedQty !== null && calculatedBottles !== null && capsulesPerBottle
-    ? capsulesReceivedQty - (calculatedBottles * capsulesPerBottle)
-    : null
+  const calculatedCapsulesKg = capsulesKg(totalUnitsUsed, capsuleWeightMg)
   const selectedBottleSize = normalizeBottleSize(form.bottleCC)
   const matchingBottleLids = useMemo(
     () => bottleLids.filter(item => !selectedBottleSize || bottleLidCapsuleType(item) === selectedBottleSize),
@@ -537,12 +564,12 @@ export default function AssemblyCreatePage() {
   const bottleInventoryAvailableForThisSave = bottleLidForSave
     ? bottleLidQuantity(bottleLidForSave) + previousBottleUsageForSameRecord
     : 0
-  const bottleInventoryRemainingAfterSave = bottleLidForSave && calculatedBottles !== null
-    ? Math.max(0, bottleInventoryAvailableForThisSave - calculatedBottles)
+  const bottleInventoryRemainingAfterSave = bottleLidForSave && bottleQuantity !== null
+    ? Math.max(0, bottleInventoryAvailableForThisSave - bottleQuantity)
     : null
 
-  // Total Labels Used always equals Total Bottles Made - one label per bottle.
-  const totalLabelsUsed = calculatedBottles
+  // Total Labels Used always equals Bottle Quantity - one label per bottle.
+  const totalLabelsUsed = bottleQuantity
   const matchingLabels = useMemo(
     () => labels.filter(item => item.brandId === form.brandId && item.productId === form.productId),
     [labels, form.brandId, form.productId]
@@ -552,6 +579,7 @@ export default function AssemblyCreatePage() {
     [matchingLabels, form.labelId]
   )
   const labelForSave = selectedLabel || (!form.labelId && matchingLabels.length === 1 ? matchingLabels[0] : null)
+  const labelDosage = labelDosageCount(labelForSave)
   const previousLabelUsageForSameRecord = useMemo(() => {
     if (!editingRecord || !labelForSave || editingRecord.labelId !== labelForSave.id) return 0
     return Number(editingRecord.totalLabelsUsed || 0) || 0
@@ -568,18 +596,18 @@ export default function AssemblyCreatePage() {
       try {
         setLoading(true)
         setError('')
-        const [brandList, productList, njps, bottleInventory, labelInventory, assembly] = await Promise.all([
+        const [brandList, productList, encapsulations, bottleInventory, labelInventory, assembly] = await Promise.all([
           fetchBrands<Brand>({ activeOnly: true }),
           fetchProducts(),
-          fetchLocalNJPs({ limit: 500 }),
+          fetchLocalEncapsulations({ limit: 200 }),
           fetchBottleLidInventory({ bottleType: 'capsule' }),
           fetchLabelInventory({ activeOnly: true }),
           editId ? fetchLocalAssembly(editId) : Promise.resolve(null)
         ])
         setBrands(brandList)
         setProducts(productList as Product[])
-        const njpList = njps as LocalNJPRecord[]
-        setNjpRows(njpList)
+        const encapsulationList = encapsulations as LocalEncapsulationRecord[]
+        setEncapsulationRows(encapsulationList)
         setBottleLids(
           (bottleInventory as BottleLidRecord[]).filter(row => bottleLidType(row) === 'capsule')
         )
@@ -587,22 +615,26 @@ export default function AssemblyCreatePage() {
 
         if (assembly) {
           const record = assembly as LocalAssemblyRecord
-          const sourceNJP = njpList.find(item => item.id === record.njpId) || null
-          const sourceBrandRefs = normalizeBrandRefsFromNJP(sourceNJP)
+          const sourceEncapsulation = encapsulationList.find(item => item.id === record.encapsulationId) || null
+          const sourceBrandRefs = normalizeBrandRefsFromEncapsulation(sourceEncapsulation)
           setEditingRecord(record)
           setForm({
-            assemblyCode: record.assemblyCode || record.batchCode || '',
-            brandId: record.brandId || sourceBrandRefs[0]?.id || sourceNJP?.brandId || '',
-            productId: record.productId || sourceNJP?.productId || '',
-            njpId: record.njpId || '',
+            assemblyCode: record.assemblyCode || '',
+            batchCode: record.batchCode || '',
+            brandId: record.brandId || sourceBrandRefs[0]?.id || sourceEncapsulation?.brandId || '',
+            productId: record.productId || sourceEncapsulation?.productId || '',
+            encapsulationId: record.encapsulationId || '',
             bottleLidId: record.bottleLidId || '',
             location: record.location || '',
             boxNo: record.boxNo || record.bucket || '',
             capsuleWeightMg: record.capsuleWeightMg === null || record.capsuleWeightMg === undefined ? '' : String(record.capsuleWeightMg),
-            capsulesReceivedQty: record.capsulesReceivedQty === null || record.capsulesReceivedQty === undefined ? '' : String(record.capsulesReceivedQty),
             bottleCC: normalizeBottleSize(record.bottleCapsuleType ?? record.bottleSize ?? record.bottleCC ?? ''),
             filledBottleWeight: record.filledBottleWeight === null || record.filledBottleWeight === undefined ? '' : String(record.filledBottleWeight),
+            weightUnit: record.weightUnit === 'mg' ? 'mg' : 'g',
             capsulesPerBottle: record.capsulesPerBottle === null || record.capsulesPerBottle === undefined ? '' : String(record.capsulesPerBottle),
+            bottleQuantity: record.bottleQuantity ?? record.totalBottlesMade
+              ? String(record.bottleQuantity ?? record.totalBottlesMade)
+              : '',
             labelId: record.labelId || '',
             productionDate: toDateInput(record.productionDate) || todayInput(),
             expiryDate: toDateInput(record.expiryDate),
@@ -660,16 +692,15 @@ export default function AssemblyCreatePage() {
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
-  const clearNJPDerivedFields = (prev: AssemblyForm): AssemblyForm => ({
+  const clearEncapsulationDerivedFields = (prev: AssemblyForm): AssemblyForm => ({
     ...prev,
-    njpId: '',
-    capsuleWeightMg: '',
-    capsulesReceivedQty: ''
+    encapsulationId: '',
+    capsuleWeightMg: ''
   })
 
   const handleSelectBrand = (brandId: string) => {
     setForm(prev => ({
-      ...clearNJPDerivedFields(prev),
+      ...clearEncapsulationDerivedFields(prev),
       brandId,
       productId: ''
     }))
@@ -677,23 +708,22 @@ export default function AssemblyCreatePage() {
 
   const handleSelectProduct = (productId: string) => {
     setForm(prev => ({
-      ...clearNJPDerivedFields(prev),
+      ...clearEncapsulationDerivedFields(prev),
       productId
     }))
   }
 
-  const handleSelectNJP = (njpId: string) => {
-    const source = njpRows.find(item => item.id === njpId) || null
-    const sourceBrandRefs = normalizeBrandRefsFromNJP(source)
+  const handleSelectEncapsulation = (encapsulationId: string) => {
+    const source = encapsulationRows.find(item => item.id === encapsulationId) || null
+    const sourceBrandRefs = normalizeBrandRefsFromEncapsulation(source)
     setForm(prev => ({
       ...prev,
-      brandId: source && prev.brandId && njpHasBrand(source, prev.brandId)
+      brandId: source && prev.brandId && encapsulationHasBrand(source, prev.brandId)
         ? prev.brandId
         : sourceBrandRefs[0]?.id || source?.brandId || prev.brandId,
       productId: source?.productId || prev.productId,
-      njpId,
-      capsuleWeightMg: source ? String(capsuleWeightMgFromNJP(source) || '') : '',
-      capsulesReceivedQty: source ? String(availableCapsulesFromNJP(source) || '') : '',
+      encapsulationId,
+      capsuleWeightMg: source ? String(capsuleWeightMgFromEncapsulation(source) || '') : '',
       productionDate: prev.productionDate || todayInput()
     }))
   }
@@ -728,65 +758,73 @@ export default function AssemblyCreatePage() {
       setError('Select the product for this Assembly.')
       return
     }
-    if (!form.njpId) {
-      setError('Select the NJP capsule record you want to use for Assembly.')
+    if (!form.encapsulationId) {
+      setError('Select the Encapsulation capsule record you want to use for Assembly.')
       return
     }
-    if (!selectedNJP) {
-      setError('Selected NJP record was not found. Refresh the page and select NJP again.')
+    if (!selectedEncapsulation) {
+      setError('Selected Encapsulation record was not found. Refresh the page and select Encapsulation again.')
       return
     }
-    if (capsulesReceivedQty === null || capsulesReceivedQty <= 0) {
-      setError('Enter how many capsules you want to use for Assembly.')
+    const unitsLabel = unitsPerBottleLabel(selectedProduct?.type)
+    if (capsulesPerBottle === null || capsulesPerBottle <= 0) {
+      setError(`Enter ${unitsLabel} before saving Assembly.`)
       return
     }
-    if (capsulesReceivedQty > availableForThisSave) {
+    if (labelDosage !== null && capsulesPerBottle > labelDosage) {
+      setError(`Capsules per bottle cannot exceed the selected label dosage count of ${labelDosage}.`)
+      return
+    }
+    if (bottleQuantity === null || bottleQuantity <= 0) {
+      setError('Enter Bottle Quantity before saving Assembly.')
+      return
+    }
+    if (totalUnitsUsed === null || totalUnitsUsed <= 0) {
+      setError('Enter Bottle Quantity and Capsules per Bottle before saving Assembly.')
+      return
+    }
+    if (totalUnitsUsed > availableForThisSave) {
       setError(
-        `Selected NJP has ${availableForThisSave} capsules available for this save; you entered ${capsulesReceivedQty}. Use ${availableForThisSave} capsules or less.`
+        `Selected Encapsulation has ${availableForThisSave} capsules available for this save; this Assembly needs ${totalUnitsUsed} (Bottle Quantity × ${unitsLabel}). Reduce Bottle Quantity or ${unitsLabel}.`
       )
       return
     }
-    if (capsulesPerBottle !== null && capsulesPerBottle <= 0) {
-      setError('Capsules Per Bottle must be greater than zero.')
+    const filledBottleWeightValue = numOrNull(form.filledBottleWeight)
+    if (filledBottleWeightValue !== null && filledBottleWeightValue <= 0) {
+      setError('Filled Bottle Weight must be greater than zero.')
       return
     }
-    if (capsulesPerBottle && calculatedBottles !== null && calculatedBottles <= 0) {
-      setError('Capsules Received Qty is not enough to make one bottle with the entered Capsules Per Bottle.')
+    if (!selectedBottleSize) {
+      setError('Select Bottle Type before saving Assembly.')
       return
     }
-    if (calculatedBottles !== null && calculatedBottles > 0) {
-      if (!selectedBottleSize) {
-        setError('Select Bottle Type before saving Assembly.')
-        return
-      }
-      if (matchingBottleLids.length === 0) {
-        setError(`Capsule ${selectedBottleSize} bottles are not available in Bottles / Lids. Add Capsule ${selectedBottleSize} bottles before creating Assembly.`)
-        return
-      }
-      if (!bottleLidForSave) {
-        setError(`Select the Capsule ${selectedBottleSize} bottle inventory entry from Bottles / Lids before saving Assembly.`)
-        return
-      }
-      if (calculatedBottles > bottleInventoryAvailableForThisSave) {
-        setError(
-          `Capsule ${selectedBottleSize} bottles are not enough. Available: ${bottleInventoryAvailableForThisSave}, required: ${calculatedBottles}. Add more Capsule ${selectedBottleSize} bottles in Bottles / Lids or reduce Total Bottles Made.`
-        )
-        return
-      }
-      if (matchingLabels.length === 0) {
-        setError('Labels for this brand/product are not available in Labels inventory. Add labels before creating Assembly.')
-        return
-      }
-      if (!labelForSave) {
-        setError('Select the label inventory entry to use for this Assembly.')
-        return
-      }
-      if (totalLabelsUsed !== null && totalLabelsUsed > labelInventoryAvailableForThisSave) {
-        setError(
-          `Labels are not enough. Available: ${labelInventoryAvailableForThisSave}, required: ${totalLabelsUsed}. Add more labels in Labels inventory or reduce Total Bottles Made.`
-        )
-        return
-      }
+    if (matchingBottleLids.length === 0) {
+      setError(`Capsule ${selectedBottleSize} bottles are not available in Bottles / Lids. Add Capsule ${selectedBottleSize} bottles before creating Assembly.`)
+      return
+    }
+    if (!bottleLidForSave) {
+      setError(`Select the Capsule ${selectedBottleSize} bottle inventory entry from Bottles / Lids before saving Assembly.`)
+      return
+    }
+    if (bottleQuantity > bottleInventoryAvailableForThisSave) {
+      setError(
+        `Capsule ${selectedBottleSize} bottles are not enough. Available: ${bottleInventoryAvailableForThisSave}, required: ${bottleQuantity}. Add more Capsule ${selectedBottleSize} bottles in Bottles / Lids or reduce Bottle Quantity.`
+      )
+      return
+    }
+    if (matchingLabels.length === 0) {
+      setError('Labels for this brand/product are not available in Labels inventory. Add labels before creating Assembly.')
+      return
+    }
+    if (!labelForSave) {
+      setError('Select the label inventory entry to use for this Assembly.')
+      return
+    }
+    if (totalLabelsUsed !== null && totalLabelsUsed > labelInventoryAvailableForThisSave) {
+      setError(
+        `Labels are not enough. Available: ${labelInventoryAvailableForThisSave}, required: ${totalLabelsUsed}. Add more labels in Labels inventory or reduce Bottle Quantity.`
+      )
+      return
     }
 
     try {
@@ -811,22 +849,22 @@ export default function AssemblyCreatePage() {
 
       const payload = {
         id: editId || undefined,
-        assemblyCode: selectedNJPIsMultiBrand ? undefined : form.assemblyCode.trim() || undefined,
         brandId: form.brandId,
         productId: form.productId,
-        njpId: form.njpId,
+        encapsulationId: form.encapsulationId,
         location: form.location.trim() || undefined,
         boxNo: form.boxNo.trim() || undefined,
         capsuleWeightMg,
         capsuleWeight: capsuleWeightMg,
-        capsulesReceivedQty,
+        capsulesPerBottle,
+        unitsPerBottle: capsulesPerBottle,
+        bottleQuantity,
+        totalUnitsUsed,
+        capsulesReceivedQty: totalUnitsUsed,
         capsulesReceivedKg: calculatedCapsulesKg,
         bottleCC: numOrNull(selectedBottleSize),
         filledBottleWeight: numOrNull(form.filledBottleWeight),
-        capsulesPerBottle,
-        totalBottlesMade: calculatedBottles,
-        looseCapsulesQty: looseCapsules,
-        remainingCapsulesAfterBottlingQty: looseCapsules,
+        weightUnit: form.weightUnit,
         bottleLidId: bottleLidForSave?.id || undefined,
         bottleType: bottleLidForSave ? 'capsule' : undefined,
         bottleCapsuleType: selectedBottleSize || bottleLidCapsuleType(bottleLidForSave),
@@ -858,13 +896,13 @@ export default function AssemblyCreatePage() {
       }
 
       const saved = await saveLocalAssembly(payload)
-      showToast({ message: 'Assembly saved from selected NJP record', type: 'success' })
-      const [refreshedNjps, refreshedBottleInventory, refreshedLabels] = await Promise.all([
-        fetchLocalNJPs({ limit: 500 }),
+      showToast({ message: 'Assembly saved from selected Encapsulation record', type: 'success' })
+      const [refreshedEncapsulations, refreshedBottleInventory, refreshedLabels] = await Promise.all([
+        fetchLocalEncapsulations({ limit: 200 }),
         fetchBottleLidInventory({ bottleType: 'capsule' }),
         fetchLabelInventory({ activeOnly: true })
       ])
-      setNjpRows(refreshedNjps as LocalNJPRecord[])
+      setEncapsulationRows(refreshedEncapsulations as LocalEncapsulationRecord[])
       setBottleLids(
         (refreshedBottleInventory as BottleLidRecord[]).filter(row => bottleLidType(row) === 'capsule')
       )
@@ -932,60 +970,60 @@ export default function AssemblyCreatePage() {
                 ))}
               </select>
               {form.brandId && availableProducts.length === 0 && (
-                <p className="mt-2 text-sm text-amber-700">
-                  No product with saved NJP is available for this brand yet.
+        <p className="mt-2 text-sm text-amber-700">
+                  No product with saved Encapsulation is available for this brand yet.
                 </p>
               )}
             </div>
 
             <div>
-              <Label>NJP Capsule Record</Label>
+              <Label>Encapsulation Capsule Record</Label>
               <select
                 className="min-h-12 w-full border border-zinc-300 bg-white px-3 py-2 text-base focus:border-[#1D838D] focus:ring-2 focus:ring-[#1D838D]/30 sm:text-sm disabled:bg-zinc-100 disabled:text-zinc-500"
-                value={form.njpId}
-                onChange={event => handleSelectNJP(event.target.value)}
+                value={form.encapsulationId}
+                onChange={event => handleSelectEncapsulation(event.target.value)}
                 disabled={!form.productId}
               >
                 <option value="">
-                  {form.productId ? 'Select NJP' : 'Select Product first'}
+                  {form.productId ? 'Select Encapsulation' : 'Select Product first'}
                 </option>
-                {availableNJPs.map(row => (
+                {availableEncapsulations.map(row => (
                   <option key={row.id} value={row.id}>
-                    {njpOptionLabel(row)}
+                    {encapsulationOptionLabel(row)}
                   </option>
                 ))}
               </select>
-              {form.productId && availableNJPs.length === 0 && (
+              {form.productId && availableEncapsulations.length === 0 && (
                 <p className="mt-2 text-sm text-amber-700">
-                  No NJP capsule record is available for this product yet.
+                  No Encapsulation capsule record is available for this product yet.
                 </p>
               )}
             </div>
           </div>
 
-          {njpRows.length === 0 && (
+          {encapsulationRows.length === 0 && (
             <p className="text-sm text-amber-700">
-              No NJP capsule record is available yet. Create NJP first, then create Assembly from it.
+              No Encapsulation capsule record is available yet. Create Encapsulation first, then create Assembly from it.
             </p>
           )}
 
-          {selectedNJP && (
+          {selectedEncapsulation && (
             <div className="grid gap-3 border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <p className="text-xs font-semibold uppercase text-zinc-500">NJP Code</p>
-                <p className="font-semibold">{selectedNJP.njpCode || '-'}</p>
+                <p className="text-xs font-semibold uppercase text-zinc-500">Encapsulation Code</p>
+                <p className="font-semibold">{selectedEncapsulation.encapsulationCode || '-'}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase text-zinc-500">Mixing Code</p>
-                <p className="font-semibold">{selectedNJP.mixingCode || '-'}</p>
+                <p className="font-semibold">{selectedEncapsulation.mixingCode || '-'}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase text-zinc-500">Product</p>
-                <p className="font-semibold">{selectedNJP.productName || selectedNJP.mixingName || '-'}</p>
+                <p className="font-semibold">{selectedEncapsulation.productName || selectedEncapsulation.mixingName || '-'}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase text-zinc-500">Brand</p>
-                <p className="font-semibold">{brandNamesFromNJP(selectedNJP) || '-'}</p>
+                <p className="font-semibold">{brandNamesFromEncapsulation(selectedEncapsulation) || '-'}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase text-zinc-500">Available Capsules</p>
@@ -993,7 +1031,7 @@ export default function AssemblyCreatePage() {
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase text-zinc-500">Capsule Weight</p>
-                <p className="font-semibold">{formatNumber(capsuleWeightMgFromNJP(selectedNJP), 4)} mg</p>
+                <p className="font-semibold">{formatNumber(capsuleWeightMgFromEncapsulation(selectedEncapsulation), 4)} mg</p>
               </div>
             </div>
           )}
@@ -1011,33 +1049,48 @@ export default function AssemblyCreatePage() {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">Identification</h3>
+        <div className="mb-6 grid gap-4 lg:grid-cols-2">
           <div>
-            <Label>Batch Code</Label>
-            {selectedNJPIsMultiBrand || visibleBatchCodeLines.length > 1 ? (
+            <Label>Assembly Code</Label>
+            {selectedEncapsulationIsMultiBrand || visibleBatchCodeLines.length > 1 ? (
               <div className="min-h-12 border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm">
                 {visibleBatchCodeLines.map((item, index) => (
                   <div key={`${item.brandId || item.brandName || index}-${index}`} className={index ? 'mt-2' : ''}>
                     <span className="font-semibold">
-                      {item.brandName || item.brandId || `Brand ${index + 1}`} Batch Code:
+                      {item.brandName || item.brandId || `Brand ${index + 1}`} Assembly Code:
                     </span>
                     <div className="text-base text-zinc-900">
-                      {item.batchCode || item.assemblyCode || 'Auto-generated from brand prefix'}
+                      {item.assemblyCode || item.batchCode || 'Auto-generated from brand prefix'}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <Input
-                placeholder="Auto-generated from brand prefix, e.g. 786001"
+                placeholder="Auto-generated per brand, e.g. A-786-001"
                 value={form.assemblyCode}
                 disabled
               />
             )}
+            <p className="mt-1 text-xs text-zinc-500">Generated automatically. Does not change once saved.</p>
           </div>
           <div>
-            <Label>NJP Code</Label>
-            <Input value={selectedNJP?.njpCode || ''} disabled />
+            <Label>Batch Code</Label>
+            <Input value={form.batchCode} placeholder="From the selected Encapsulation record" disabled />
+            <p className="mt-1 text-xs text-zinc-500">From the selected Encapsulation's lot number.</p>
+          </div>
+        </div>
+
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">Product Information</h3>
+        <div className="mb-6 grid gap-4 lg:grid-cols-2">
+          <div>
+            <Label>Encapsulation Code</Label>
+            <Input value={selectedEncapsulation?.encapsulationCode || ''} disabled />
+          </div>
+          <div>
+            <Label>Product Type</Label>
+            <Input value={selectedProduct?.type || 'capsule'} disabled />
           </div>
           <div>
             <Label>Location</Label>
@@ -1063,29 +1116,78 @@ export default function AssemblyCreatePage() {
             />
           </div>
           <div>
-            <Label>Capsules Received Qty</Label>
-            <NumberInput
-              step="1"
-              value={form.capsulesReceivedQty}
-              onChange={event => updateField('capsulesReceivedQty', event.target.value)}
-            />
-            {selectedNJP && (
+            <Label>Label Inventory</Label>
+            <select
+              className="min-h-12 w-full border border-zinc-300 bg-white px-3 py-2 text-base focus:border-[#1D838D] focus:ring-2 focus:ring-[#1D838D]/30 sm:text-sm disabled:bg-zinc-100 disabled:text-zinc-500"
+              value={form.labelId}
+              onChange={event => updateField('labelId', event.target.value)}
+              disabled={!form.brandId || !form.productId || matchingLabels.length === 0}
+            >
+              <option value="">
+                {!form.brandId || !form.productId
+                  ? 'Select Brand and Product first'
+                  : matchingLabels.length
+                    ? 'Select label stock'
+                    : 'No label stock available for this brand/product'}
+              </option>
+              {matchingLabels.map(row => (
+                <option key={row.id} value={row.id}>
+                  {labelOptionLabel(row)}
+                </option>
+              ))}
+            </select>
+            {labelForSave ? (
               <p className="mt-1 text-xs text-zinc-500">
-                Available for this save: {availableForThisSave}; remaining after save: {Math.max(0, availableForThisSave - (capsulesReceivedQty || 0))}
+                Required: {totalLabelsUsed ?? 0}; available for this save: {labelInventoryAvailableForThisSave}; remaining after save: {labelInventoryRemainingAfterSave ?? '-'}.
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-amber-700">
+                {form.brandId && form.productId
+                  ? 'Add labels for this brand/product in Labels inventory before saving Assembly.'
+                  : 'Select Brand and Product before choosing label inventory.'}
               </p>
             )}
           </div>
+        </div>
+
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">Bottle Configuration</h3>
+        <div className="mb-6 grid gap-4 lg:grid-cols-2">
           <div>
-            <Label>Capsules Received Kg</Label>
-            <NumberInput value={calculatedCapsulesKg === null ? '' : String(calculatedCapsulesKg)} disabled />
-          </div>
-          <div>
-            <Label>Capsules Per Bottle</Label>
+            <Label>{unitsPerBottleLabel(selectedProduct?.type)}</Label>
             <NumberInput
               step="1"
               value={form.capsulesPerBottle}
               onChange={event => updateField('capsulesPerBottle', event.target.value)}
             />
+            {labelDosage !== null && (
+              <p className={`mt-1 text-xs ${capsulesPerBottle !== null && capsulesPerBottle > labelDosage ? 'text-rose-700' : 'text-zinc-500'}`}>
+                Selected label dosage count: {labelDosage}. Cannot exceed this.
+              </p>
+            )}
+          </div>
+          <div>
+            <Label>Bottle Quantity</Label>
+            <NumberInput
+              step="1"
+              value={form.bottleQuantity}
+              onChange={event => updateField('bottleQuantity', event.target.value)}
+            />
+            {selectedEncapsulation && (
+              <p className="mt-1 text-xs text-zinc-500">
+                Capsules available for this save: {availableForThisSave}; remaining after save: {totalUnitsUsed === null ? availableForThisSave : Math.max(0, availableForThisSave - totalUnitsUsed)}
+              </p>
+            )}
+          </div>
+          <div>
+            <Label>Total Units Used</Label>
+            <NumberInput value={totalUnitsUsed === null ? '' : String(totalUnitsUsed)} disabled />
+            <p className="mt-1 text-xs text-zinc-500">
+              Bottle Quantity × {unitsPerBottleLabel(selectedProduct?.type)}. Deducted from the selected Encapsulation.
+            </p>
+          </div>
+          <div>
+            <Label>Capsules Received Kg</Label>
+            <NumberInput value={calculatedCapsulesKg === null ? '' : String(calculatedCapsulesKg)} disabled />
           </div>
           <div>
             <Label>Bottle Type</Label>
@@ -1132,7 +1234,7 @@ export default function AssemblyCreatePage() {
             </select>
             {bottleLidForSave ? (
               <p className="mt-1 text-xs text-zinc-500">
-                Required: {calculatedBottles ?? 0}; available for this save: {bottleInventoryAvailableForThisSave}; remaining after save: {bottleInventoryRemainingAfterSave ?? '-'}.
+                Required: {bottleQuantity ?? 0}; available for this save: {bottleInventoryAvailableForThisSave}; remaining after save: {bottleInventoryRemainingAfterSave ?? '-'}.
               </p>
             ) : (
               <p className="mt-1 text-xs text-amber-700">
@@ -1143,56 +1245,16 @@ export default function AssemblyCreatePage() {
             )}
           </div>
           <div>
-            <Label>Total Bottles Made</Label>
-            <NumberInput value={calculatedBottles === null ? '' : String(calculatedBottles)} disabled />
-          </div>
-          <div>
-            <Label>Label Inventory</Label>
-            <select
-              className="min-h-12 w-full border border-zinc-300 bg-white px-3 py-2 text-base focus:border-[#1D838D] focus:ring-2 focus:ring-[#1D838D]/30 sm:text-sm disabled:bg-zinc-100 disabled:text-zinc-500"
-              value={form.labelId}
-              onChange={event => updateField('labelId', event.target.value)}
-              disabled={!form.brandId || !form.productId || matchingLabels.length === 0}
-            >
-              <option value="">
-                {!form.brandId || !form.productId
-                  ? 'Select Brand and Product first'
-                  : matchingLabels.length
-                    ? 'Select label stock'
-                    : 'No label stock available for this brand/product'}
-              </option>
-              {matchingLabels.map(row => (
-                <option key={row.id} value={row.id}>
-                  {labelOptionLabel(row)}
-                </option>
-              ))}
-            </select>
-            {labelForSave ? (
-              <p className="mt-1 text-xs text-zinc-500">
-                Required: {totalLabelsUsed ?? 0}; available for this save: {labelInventoryAvailableForThisSave}; remaining after save: {labelInventoryRemainingAfterSave ?? '-'}.
-              </p>
-            ) : (
-              <p className="mt-1 text-xs text-amber-700">
-                {form.brandId && form.productId
-                  ? 'Add labels for this brand/product in Labels inventory before saving Assembly.'
-                  : 'Select Brand and Product before choosing label inventory.'}
-              </p>
-            )}
-          </div>
-          <div>
             <Label>Total Labels Used</Label>
             <NumberInput value={totalLabelsUsed === null ? '' : String(totalLabelsUsed)} disabled />
             <p className="mt-1 text-xs text-zinc-500">
-              Auto-calculated: one label per bottle made.
+              Auto-calculated: one label per bottle.
             </p>
           </div>
-          <div>
-            <Label>Remaining Capsules Qty</Label>
-            <NumberInput value={looseCapsules === null ? '' : String(looseCapsules)} disabled />
-            <p className="mt-1 text-xs text-zinc-500">
-              Capsules left after complete bottles.
-            </p>
-          </div>
+        </div>
+
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">Weight</h3>
+        <div className="mb-6 grid gap-4 lg:grid-cols-2">
           <div>
             <Label>Filled Bottle Weight</Label>
             <NumberInput
@@ -1200,6 +1262,22 @@ export default function AssemblyCreatePage() {
               onChange={event => updateField('filledBottleWeight', event.target.value)}
             />
           </div>
+          <div>
+            <Label>Weight Unit</Label>
+            <select
+              className="min-h-12 w-full border border-zinc-300 bg-white px-3 py-2 text-base focus:border-[#1D838D] focus:ring-2 focus:ring-[#1D838D]/30 sm:text-sm"
+              value={form.weightUnit}
+              onChange={event => updateField('weightUnit', event.target.value as WeightUnit)}
+            >
+              {weightUnits.map(unit => (
+                <option key={unit} value={unit}>{unit}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">Additional Information</h3>
+        <div className="grid gap-4 lg:grid-cols-2">
           <div>
             <Label>Production Date</Label>
             <Input

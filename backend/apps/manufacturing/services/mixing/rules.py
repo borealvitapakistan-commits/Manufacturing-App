@@ -564,16 +564,109 @@ class MixingRules:
 
         return sessions[-1].get(key, default)
 
+    @staticmethod
+    def _code_word(value: Any) -> str:
+        return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
+
     @classmethod
-    def _next_code(cls, records: list[dict[str, Any]]) -> str:
+    def _product_code_products(cls) -> list[dict[str, Any]]:
+        return []
+
+    @classmethod
+    def _product_code_prefix(
+        cls,
+        product: dict[str, Any] | None,
+        products: list[dict[str, Any]] | None = None,
+    ) -> str:
+        product = product or {}
+        products = products or []
+        product_id = cls._as_text(product.get("id"))
+        product_name = cls._as_text(
+            product.get("name")
+            or product.get("productName")
+            or product.get("product_name")
+            or product.get("productCode")
+            or product.get("product_code")
+            or product.get("code")
+            or product.get("npn")
+            or "PRO"
+        )
+        words = [cls._code_word(word) for word in product_name.split()]
+        words = [word for word in words if word]
+        first_word = words[0] if words else "PRO"
+        base_prefix = (first_word[:3] + "XXX")[:3]
+
+        has_first_word_collision = False
+        for other in products:
+            other_id = cls._as_text(other.get("id"))
+            if product_id and other_id == product_id:
+                continue
+            other_name = cls._as_text(
+                other.get("name")
+                or other.get("productName")
+                or other.get("product_name")
+                or other.get("productCode")
+                or other.get("product_code")
+                or other.get("code")
+                or other.get("npn")
+            )
+            other_words = [cls._code_word(word) for word in other_name.split()]
+            other_words = [word for word in other_words if word]
+            if other_words and (other_words[0][:3] + "XXX")[:3] == base_prefix:
+                has_first_word_collision = True
+                break
+
+        if has_first_word_collision:
+            suffix_letter = words[1][:1] if len(words) > 1 else first_word[2:3]
+            return (first_word[:2] + (suffix_letter or "X") + "XXX")[:3]
+
+        return base_prefix
+
+    @classmethod
+    def _mixing_code_number(cls, code: Any) -> int | None:
+        text = cls._as_text(code).upper()
+        if text.startswith("MIX-") and text[4:].isdigit():
+            return int(text[4:])
+        if text.startswith("M-"):
+            parts = text.split("-")
+            if len(parts) == 3 and parts[2].isdigit():
+                return int(parts[2])
+        return None
+
+    @classmethod
+    def _format_mixing_code(
+        cls,
+        *,
+        product: dict[str, Any] | None,
+        number: Any,
+        products: list[dict[str, Any]] | None = None,
+    ) -> str:
+        try:
+            numeric = int(number)
+        except (TypeError, ValueError):
+            numeric = 1
+        return f"M-{cls._product_code_prefix(product, products)}-{numeric:03d}"
+
+    @classmethod
+    def _next_code(
+        cls,
+        records: list[dict[str, Any]],
+        *,
+        product: dict[str, Any] | None = None,
+        products: list[dict[str, Any]] | None = None,
+    ) -> str:
         highest = 0
 
         for record in records:
-            code = str(record.get("mixingCode") or "")
-            if code.startswith("MIX-") and code[4:].isdigit():
-                highest = max(highest, int(code[4:]))
+            code_number = cls._mixing_code_number(record.get("mixingCode"))
+            if code_number is not None:
+                highest = max(highest, code_number)
 
-        return f"MIX-{highest + 1:04d}"
+        return cls._format_mixing_code(
+            product=product,
+            number=highest + 1,
+            products=products,
+        )
 
     @staticmethod
     def _ensure_unique_code(
@@ -794,10 +887,11 @@ class MixingRules:
             if session_date and session_date not in mixing_dates:
                 mixing_dates.append(session_date)
 
-        mixing_code = cls._as_text(pick("mixingCode", "")) or cls._next_code(records)
-
         location = cls._as_text(pick("location", pick("rackNo", "")))
         product = cls._product_by_id(pick("productId", ""))
+        mixing_code = cls._as_text(pick("mixingCode", ""))
+        if not mixing_code and existing.get("mixingCode"):
+            mixing_code = cls._as_text(existing.get("mixingCode"))
         product_code = cls._as_text(
             pick(
                 "productCode",
@@ -875,7 +969,6 @@ class MixingRules:
             "reason": pick("reason", "") or "",
             "changeReason": pick("changeReason", pick("reason", "")) or "",
             "isEditable": True,
-            "editDisclaimer": cls.EDIT_DISCLAIMER,
         }
 
         # Backward-compatible aliases for any old frontend/table code.
@@ -887,11 +980,12 @@ class MixingRules:
         cleaned.pop("status", None)
         cleaned.pop("productNumber", None)
 
-        cls._ensure_unique_code(
-            records,
-            str(cleaned["mixingCode"]),
-            current_id=str(existing.get("id") or "") or None,
-        )
+        if cleaned["mixingCode"]:
+            cls._ensure_unique_code(
+                records,
+                str(cleaned["mixingCode"]),
+                current_id=str(existing.get("id") or "") or None,
+            )
 
         cleaned["freshMixingRequiredKg"] = fresh_mix_kg
         cleaned["calculatedFreshRawMaterialsTotalKg"] = fresh_materials_total

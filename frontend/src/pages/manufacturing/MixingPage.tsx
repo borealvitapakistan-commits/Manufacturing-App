@@ -1,6 +1,5 @@
 // ============================================================================
-// Mixing Reports Page - Native Next.js Implementation
-// Standalone Mixing with multi-day timing, editable RM/NMI rows, and disclaimer
+// Mixing page with multi-day timing and editable RM/NMI rows.
 // ============================================================================
 
 'use client'
@@ -21,7 +20,6 @@ import {
 import {
   deleteLocalMixing,
   fetchBrands,
-  fetchLabelInventory,
   fetchLocalMixings,
   fetchProducts,
   fetchRawMaterials,
@@ -29,8 +27,8 @@ import {
 } from '@/lib/supabase/data'
 import type { Brand } from '@/types'
 
-const EDIT_DISCLAIMER =
-  'This mixing record is fully editable. If any raw material is added, removed, or any dose/quantity is changed, the updated saved version will be treated as the effective mixing record and should be reviewed before use.'
+const MODIFIED_FORMULATION_NOTE =
+  'This means the saved formulation has been changed from the product formula and should be reviewed before use.'
 
 // NMI raw materials come from the Raw Material category named MMA.
 const NMI_CATEGORY = 'MMA'
@@ -184,7 +182,9 @@ interface LocalMixingFormState {
 
 interface Product {
   id: string
-  name: string
+  name?: string | null
+  productName?: string | null
+  product_name?: string | null
   code?: string | null
   productCode?: string | null
   product_code?: string | null
@@ -973,16 +973,71 @@ function isModifiedFromFormula(rows: LocalMixingRow[], product?: Product | null,
   return formula.some((value, index) => value !== current[index])
 }
 
-function nextMixingCode(records: LocalMixingRecord[], currentId?: string): string {
+function normalizeCodeText(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toUpperCase()
+}
+
+function productDisplayName(product?: Partial<Product> | null): string {
+  return String(
+    product?.name ||
+      product?.productName ||
+      product?.product_name ||
+      product?.productCode ||
+      product?.product_code ||
+      product?.code ||
+      product?.npn ||
+      ''
+  ).trim()
+}
+
+function productCodePrefix(product: Product, products: Product[]): string {
+  const words = productDisplayName(product)
+    .split(/\s+/)
+    .map(normalizeCodeText)
+    .filter(Boolean)
+  const firstWord = words[0] || 'PRO'
+  const basePrefix = firstWord.slice(0, 3).padEnd(3, 'X')
+  const hasFirstWordCollision = products.some(other => {
+    if (other.id === product.id) return false
+    const otherFirst = normalizeCodeText(productDisplayName(other).split(/\s+/)[0] || '')
+    return otherFirst.slice(0, 3).padEnd(3, 'X') === basePrefix
+  })
+
+  if (hasFirstWordCollision) {
+    const suffixLetter = words.length > 1 ? words[1].slice(0, 1) : firstWord.slice(2, 3)
+    return `${firstWord.slice(0, 2)}${suffixLetter || 'X'}`.padEnd(3, 'X')
+  }
+
+  return basePrefix
+}
+
+function mixingCodeNumber(code: string): number | null {
+  const productCodeMatch = code.match(/^M-[A-Z0-9]{3}-(\d+)$/i)
+  if (productCodeMatch) return Number(productCodeMatch[1])
+
+  const legacyMatch = code.match(/^MIX-(\d+)$/i)
+  if (legacyMatch) return Number(legacyMatch[1])
+
+  return null
+}
+
+function nextProductMixingCode(
+  records: LocalMixingRecord[],
+  product: Product | null | undefined,
+  products: Product[],
+  currentId?: string
+): string {
+  if (!product) return ''
   let highest = 0
   records.forEach(record => {
     if (currentId && record.id === currentId) return
     const code = String(record.mixingCode || '')
-    if (code.startsWith('MIX-') && /^\d+$/.test(code.slice(4))) {
-      highest = Math.max(highest, Number(code.slice(4)))
+    const number = mixingCodeNumber(code)
+    if (number !== null && Number.isFinite(number)) {
+      highest = Math.max(highest, number)
     }
   })
-  return `MIX-${String(highest + 1).padStart(4, '0')}`
+  return `M-${productCodePrefix(product, products)}-${String(highest + 1).padStart(3, '0')}`
 }
 
 function recordTotalMixKg(record: LocalMixingRecord): number {
@@ -1303,7 +1358,7 @@ function LocalMaterialRowsEditor({
                 >
                   i
                   <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-80 -translate-x-1/2 rounded-md border border-zinc-200 bg-white p-3 text-left text-xs font-medium text-zinc-700 shadow-lg group-hover:block group-focus:block group-active:block">
-                    {EDIT_DISCLAIMER}
+                    {MODIFIED_FORMULATION_NOTE}
                   </span>
                 </button>
               </span>
@@ -1423,7 +1478,6 @@ function LocalMixingFormPanel({
   brands,
   products,
   rawMaterials,
-  brandProductLinks,
   records,
   onClose,
   onSave,
@@ -1433,7 +1487,6 @@ function LocalMixingFormPanel({
   brands: Brand[]
   products: Product[]
   rawMaterials: RawMaterial[]
-  brandProductLinks: { brandId: string; productId: string }[]
   records: LocalMixingRecord[]
   onClose: () => void
   onSave: (form: LocalMixingFormState) => Promise<void>
@@ -1495,16 +1548,8 @@ function LocalMixingFormPanel({
   const selectedBrandSet = useMemo(() => new Set(selectedBrandIds), [selectedBrandIds])
 
   const availableProducts = useMemo(() => {
-    if (!selectedBrandIds.length) return []
-    const linkedProductIds = new Set(
-      brandProductLinks
-        .filter(link => selectedBrandSet.has(link.brandId))
-        .map(link => link.productId)
-    )
-    return linkedProductIds.size
-      ? products.filter(product => linkedProductIds.has(product.id))
-      : products
-  }, [brandProductLinks, products, selectedBrandIds.length, selectedBrandSet])
+    return products
+  }, [products])
 
   const selectedProduct = useMemo(
     () => products.find(item => item.id === form.productId) || null,
@@ -1532,8 +1577,8 @@ function LocalMixingFormPanel({
   const hasAvailableExistingPowder = existingPowderOptions.length > 0
 
   const generatedCode = useMemo(
-    () => (form.productId ? nextMixingCode(records, form.id) : ''),
-    [form.id, form.productId, records]
+    () => nextProductMixingCode(records, selectedProduct, products, form.id),
+    [form.id, products, records, selectedProduct]
   )
 
   const displayMixingCode = form.autoGenerateCode ? generatedCode : form.mixingCode
@@ -1627,7 +1672,7 @@ function LocalMixingFormPanel({
       recalculateFormKg({
         ...prev,
         productId,
-        productName: product?.name || '',
+        productName: productDisplayName(product),
         mixedPowderName: '',
         reuseExistingMixing: false,
         existingMixedPowderId: '',
@@ -1751,6 +1796,12 @@ function LocalMixingFormPanel({
     return ''
   }
 
+  const liveValidationError = useMemo(
+    () => validateBeforeSave(recalculateFormKg(form)),
+    [form, hasAvailableExistingPowder, materialsModified, selectedExistingPowder]
+  )
+  const visibleError = error || liveValidationError
+
   const handleSave = async () => {
     const preparedForm = recalculateFormKg(form)
     const validationError = validateBeforeSave(preparedForm)
@@ -1790,15 +1841,11 @@ function LocalMixingFormPanel({
   return (
     <Card title={record?.id ? 'Edit Mixing' : 'Create Mixing'}>
       <div className="space-y-5">
-        {error && (
+        {visibleError && (
           <div className="border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">
-            {error}
+            {visibleError}
           </div>
         )}
-
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-          {EDIT_DISCLAIMER}
-        </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           <div>
@@ -1837,12 +1884,11 @@ function LocalMixingFormPanel({
             <Select
               value={form.productId}
               onChange={event => handleProductChange(event.target.value)}
-              disabled={!selectedBrandIds.length}
             >
               <option value="">Select Product</option>
               {availableProducts.map(product => (
                 <option key={product.id} value={product.id}>
-                  {product.name}
+                  {productDisplayName(product) || 'Unnamed Product'}
                 </option>
               ))}
             </Select>
@@ -2074,7 +2120,7 @@ function LocalMixingFormPanel({
             )}
           </div>
           <div className="flex justify-end gap-2">
-            <Button type="button" onClick={handleSave} loading={saving}>
+            <Button type="button" onClick={handleSave} loading={saving} disabled={Boolean(liveValidationError)}>
               Save Mixing
             </Button>
           </div>
@@ -2093,7 +2139,6 @@ export default function MixingPage() {
   const [brands, setBrands] = useState<Brand[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([])
-  const [brandProductLinks, setBrandProductLinks] = useState<{ brandId: string; productId: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -2103,26 +2148,17 @@ export default function MixingPage() {
       setLoading(true)
       setError('')
 
-      const [mixingData, brandData, productData, rawMaterialData, labelData] = await Promise.all([
-        fetchLocalMixings(),
+      const [mixingData, brandData, productData, rawMaterialData] = await Promise.all([
+        fetchLocalMixings({ limit: 200 }),
         fetchBrands<Brand>({ activeOnly: true }),
         fetchProducts(),
-        fetchRawMaterials(),
-        fetchLabelInventory({ activeOnly: true })
+        fetchRawMaterials()
       ])
 
       setRecords(mixingData as LocalMixingRecord[])
       setBrands(brandData)
       setProducts(productData as Product[])
       setRawMaterials(rawMaterialData as RawMaterial[])
-      setBrandProductLinks(
-        (labelData as { brandId?: string; productId?: string }[])
-          .filter(link => link.brandId && link.productId)
-          .map(link => ({
-            brandId: String(link.brandId),
-            productId: String(link.productId)
-          }))
-      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load mixing records.')
     } finally {
@@ -2242,8 +2278,7 @@ export default function MixingPage() {
 
       remarks: preparedForm.remarks.trim(),
       reason: preparedForm.changeReason.trim(),
-      changeReason: preparedForm.changeReason.trim(),
-      editDisclaimer: EDIT_DISCLAIMER
+      changeReason: preparedForm.changeReason.trim()
     }
 
     await saveLocalMixing(payload)
@@ -2288,7 +2323,6 @@ export default function MixingPage() {
           brands={brands}
           products={products}
           rawMaterials={rawMaterials}
-          brandProductLinks={brandProductLinks}
           records={records}
           onClose={closeForm}
           onSave={async form => {

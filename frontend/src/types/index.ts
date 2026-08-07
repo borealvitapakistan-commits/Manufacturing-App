@@ -8,6 +8,8 @@ export interface Brand {
   name: string
   codePrefix: string
   shortName: string | null
+  contactName: string | null
+  contactEmail: string | null
   addressLine1: string | null
   addressLine2: string | null
   city: string | null
@@ -26,6 +28,8 @@ export interface CreateBrandInput {
   name: string
   codePrefix: string
   shortName?: string
+  contactName?: string | null
+  contactEmail?: string | null
   addressLine1?: string | null
   addressLine2?: string | null
   city?: string | null
@@ -115,6 +119,9 @@ export interface RawMaterialCategory {
   name: string
   description?: string | null
   isActive: boolean
+  isNmiCategory?: boolean
+  is_nmi_category?: boolean
+  metadata?: Record<string, unknown>
   createdAt: number
   updatedAt: number
 }
@@ -124,6 +131,8 @@ export interface CreateRawMaterialCategoryInput {
   name: string
   description?: string | null
   isActive?: boolean
+  isNmiCategory?: boolean
+  metadata?: Record<string, unknown>
 }
 
 export interface RawMaterial {
@@ -137,6 +146,7 @@ export interface RawMaterial {
   location?: string | null
   coaLink?: string | null
   comments?: string | null
+  potency?: string | null
   pricePerKg: number
   createdAt: number
   updatedAt: number
@@ -150,6 +160,7 @@ export interface CreateRawMaterialInput {
   location?: string
   coaLink?: string | null
   comments?: string | null
+  potency?: string | null
   pricePerKg: number
   code?: string
 }
@@ -210,10 +221,9 @@ export type VendorCategory =
   | 'bottles_jars'
   | 'lid_supplier'
   | 'label_supplier'
-  | 'printer'
-  | 'printing_vendor'
-  | 'machine'
   | 'logistic'
+  | 'manufacturer'
+  | 'shop'
 
 export interface Vendor {
   id: string
@@ -251,6 +261,48 @@ export interface CreateVendorInput {
   paymentTerms?: string
   notes?: string
   isActive?: boolean
+}
+
+// Sent Items (goods sent out to a vendor) Types
+export type SentItemType = 'assembly' | 'raw_material' | 'encapsulation' | 'mixing' | 'label'
+
+export interface SentItem {
+  id: string
+  srNumber?: number | null
+  vendorId: string
+  vendorName?: string | null
+  brandId: string
+  brandName?: string | null
+  itemType: SentItemType
+  sourceId: string
+  inventoryItemId: string
+  itemName: string
+  itemCode: string
+  quantity: number
+  sentAt: number | string
+  notes: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SentItemSource {
+  id: string
+  inventoryItemId: string
+  itemName: string
+  itemCode: string
+  availableQty: number
+  label: string
+}
+
+export interface CreateSentItemInput {
+  id?: string
+  vendorId: string
+  brandId: string
+  itemType: SentItemType
+  sourceId: string
+  quantity: number
+  sentAt?: string | null
+  notes?: string | null
 }
 
 // Purchase Order Types
@@ -400,7 +452,7 @@ export interface DeleteCascadeResult {
   restored: Record<string, number>
   deleted: {
     mixing: number
-    njp: number
+    encapsulation: number
     assembly: number
   }
 }

@@ -90,9 +90,9 @@ export function getStatusLabel(status: string): string {
     case 'mixingPending':
       return 'New / Send to Mixing'
     case 'ngpPending':
-      return 'Mixing Complete – Go to NJP'
+      return 'Mixing Complete - Go to Encapsulation'
     case 'assemblyPending':
-      return 'NJP Complete – Go to Assembly'
+      return 'Encapsulation Complete - Go to Assembly'
     case 'finalized':
       return 'Finalized'
   }

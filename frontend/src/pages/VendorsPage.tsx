@@ -36,10 +36,9 @@ const vendorCategories: Array<{ value: VendorCategory; label: string }> = [
   { value: 'bottles_jars', label: 'Bottles and jars' },
   { value: 'lid_supplier', label: 'Lid supplier' },
   { value: 'label_supplier', label: 'Label supplier' },
-  { value: 'printer', label: 'Printer' },
-  { value: 'printing_vendor', label: 'Printing vendor' },
-  { value: 'machine', label: 'Machine' },
-  { value: 'logistic', label: 'Logistic' }
+  { value: 'logistic', label: 'Logistic' },
+  { value: 'manufacturer', label: 'Manufacturer' },
+  { value: 'shop', label: 'Shop' }
 ]
 
 interface FormState {
@@ -114,7 +113,7 @@ export default function VendorsPage() {
       setVendors(await fetchVendors())
     } catch (err) {
       console.error('Failed to load vendors:', err)
-      setError('Vendor table is missing. Run schemas/10_master_data.sql and schemas/20_rls_policies.sql.')
+      setError('Failed to load vendors. Check the /api/vendors/ backend endpoint.')
     } finally {
       setLoading(false)
     }

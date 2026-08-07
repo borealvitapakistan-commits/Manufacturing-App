@@ -1,13 +1,26 @@
-from apps.manufacturing.services import AssemblyService, MixingService, NJPService
+from apps.manufacturing.services import (
+    AssemblyService,
+    EncapsulationService,
+    MixingService,
+    NJPService,
+)
 
 from .assembly import AssemblyDetailView, AssemblyListCreateView
+from .encapsulation import (
+    EncapsulationDetailView,
+    EncapsulationListCreateView,
+    NJPDetailView,
+    NJPListCreateView,
+)
 from .mixing import MixingDetailView, MixingListCreateView
-from .njp import NJPDetailView, NJPListCreateView
 
 __all__ = [
     "AssemblyDetailView",
     "AssemblyListCreateView",
     "AssemblyService",
+    "EncapsulationDetailView",
+    "EncapsulationListCreateView",
+    "EncapsulationService",
     "MixingService",
     "NJPService",
     "MixingDetailView",

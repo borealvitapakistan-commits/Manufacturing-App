@@ -50,12 +50,28 @@ class RawMaterialCategoryListCreateView(TableListCreateView):
     filter_map = {
         "active": "is_active",
         "activeOnly": "is_active",
+        "isNmiCategory": "is_nmi_category",
+        "is_nmi_category": "is_nmi_category",
+        "nmiOnly": "is_nmi_category",
     }
 
     def get_filters(self, request):
         filters = super().get_filters(request)
-        if request.query_params.get("activeOnly", "").lower() == "true":
-            filters["is_active"] = True
+        for query_name, db_name in (
+            ("active", "is_active"),
+            ("activeOnly", "is_active"),
+            ("isNmiCategory", "is_nmi_category"),
+            ("is_nmi_category", "is_nmi_category"),
+            ("nmiOnly", "is_nmi_category"),
+        ):
+            value = request.query_params.get(query_name)
+            if value is None:
+                continue
+            normalized = value.lower()
+            if normalized in {"true", "1", "yes"}:
+                filters[db_name] = True
+            elif normalized in {"false", "0", "no"}:
+                filters[db_name] = False
         return filters
 
 

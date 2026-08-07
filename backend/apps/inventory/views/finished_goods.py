@@ -21,6 +21,7 @@ class FinishedGoodsListCreateView(TableListCreateView):
         "brandId": "brand_id",
         "productId": "product_id",
         "category": "category",
+        "month": "month",
     }
     search_column = "name"
 

@@ -15,6 +15,16 @@ Migration order:
 8. `007_reporting_views.sql`
 9. `008_grants.sql`
 10. `009_assembly_labels.sql`
+11. `010_performance_indexes.sql`
+12. `011_product_mixing_codes.sql`
+13. `012_fix_product_mixing_prefix_collision.sql`
+14. `013_encapsulation_rename_and_load_checks.sql`
+15. `014_assembly_code_batch_units_weight.sql`
+16. `015_vendors_and_sent_items.sql`
+17. `016_brand_profile_columns.sql`
+18. `017_raw_material_category_cleanup.sql`
+19. `018_remove_inventory_item_ids_from_labels_raw_materials.sql`
+20. `019_restore_inventory_item_ids_for_labels_raw_materials.sql`
 
 Important: `000_drop_legacy_schema.sql` is destructive. It removes old tables, views, relationships, and helper functions. Run it only after backing up the database.
 
@@ -77,7 +87,7 @@ No default `Other` raw material category is inserted. If a raw material has no c
 
 | Key Type | Where Used | Benefit |
 |---|---|---|
-| Primary key | Most tables use `id uuid primary key`; extension tables use `inventory_item_id` as PK | Gives one stable identity per record. |
+| Primary key | Most tables use `id uuid primary key`; inventory extension tables such as `raw_materials`, `label_specs`, and `packaging_items` use `inventory_item_id` as both PK and FK to `inventory_items(id)` | Gives one stable inventory identity per item while allowing each item type to keep its own detail table. |
 | Foreign key | Links entities such as product -> mixing, mixing -> NJP, NJP -> assembly | Enforces real relationships and prevents orphan records. |
 | Unique index | Codes, brand prefixes, item lot pairs, formula rows | Prevents duplicate business records. |
 | Partial unique index | Optional codes like product code, NPN, item code | Allows blanks/nulls but prevents duplicate real values. |
@@ -180,7 +190,7 @@ Relationships:
 
 Type: master/reference table.
 
-Purpose: Groups raw materials. Also marks NMI categories using `is_nmi_category`.
+Purpose: Groups raw materials. Also marks NMI categories using `is_nmi_category`. Category identity is the UUID and display name; there is no saved category code column.
 
 Columns:
 
@@ -188,11 +198,10 @@ Columns:
 |---|---|---|---|
 | `id` | `uuid` | Primary key | Stable category identity. |
 | `name` | `text` | Required, case-insensitive unique index | Human category name. |
-| `code` | `text` | Required, case-insensitive unique index | Short category code like `NMI` or `MMA`. |
 | `description` | `text` | Optional | Category notes. |
 | `is_nmi_category` | `boolean` | Default `false` | Lets NJP/Mixing identify non-medicinal categories. |
 | `is_active` | `boolean` | Default `true` | Keeps old categories without deleting history. |
-| `metadata` | `jsonb` | Default `{}` | Flexible extra fields. |
+| `metadata` | `jsonb` | Default `{}` | Flexible extra structured fields without adding columns for every small attribute. |
 | `created_at` | `timestamptz` | Default `now()` | Audit timestamp. |
 | `updated_at` | `timestamptz` | Trigger maintained | Audit timestamp. |
 
@@ -249,7 +258,7 @@ Columns:
 
 | Column | Data Type | Key/Rule | Why |
 |---|---|---|---|
-| `inventory_item_id` | `uuid` | PK, FK cascade to inventory_items | One raw material equals one inventory item. |
+| `inventory_item_id` | `uuid` | PK, FK cascade to inventory_items | One raw material equals one master inventory item. |
 | `category_id` | `uuid` | FK to `raw_material_categories`, set null on delete | Category is optional and safe to delete. |
 | `vendor_name` | `text` | Optional | Supplier information. |
 | `coa_reference` | `text` | Optional | COA traceability. |
@@ -280,7 +289,7 @@ Columns:
 
 | Column | Data Type | Key/Rule | Why |
 |---|---|---|---|
-| `inventory_item_id` | `uuid` | PK, FK cascade to inventory_items | One label equals one inventory item. |
+| `inventory_item_id` | `uuid` | PK, FK cascade to inventory_items | One label equals one master inventory item. |
 | `brand_id` | `uuid` | FK to brands, set null on delete | Optional brand relation. |
 | `product_id` | `uuid` | FK to products, set null on delete | Optional product relation. |
 | `label_name` | `text` | Required | Label display name. |
@@ -1048,6 +1057,38 @@ Note:
 
 - This follows the current app style where Django uses Supabase service access as the backend API layer.
 - If Row Level Security is added later, grants and policies should be revisited.
+
+## 018_remove_inventory_item_ids_from_labels_raw_materials.sql
+
+Type: superseded compatibility cleanup migration.
+
+Purpose:
+
+- Temporarily removed the exposed `inventory_item_id` column name from Raw Materials and Labels.
+- Preserves the same UUID values by renaming `raw_materials.inventory_item_id` to `raw_materials.id`.
+- Preserves the same UUID values by renaming `label_specs.inventory_item_id` to `label_specs.id`.
+- Temporarily kept both `raw_materials.id` and `label_specs.id` linked to `inventory_items(id)` for inventory ledger traceability.
+- Rebuilds the raw-material category lookup index using the new `id` column.
+
+Important:
+
+- This migration is reversed by `019_restore_inventory_item_ids_for_labels_raw_materials.sql`.
+- The final intended schema keeps `raw_materials.inventory_item_id` and `label_specs.inventory_item_id`.
+
+## 019_restore_inventory_item_ids_for_labels_raw_materials.sql
+
+Type: schema correction migration.
+
+Purpose:
+
+- Restores `raw_materials.inventory_item_id` as the raw material primary key and FK to `inventory_items(id)`.
+- Restores `label_specs.inventory_item_id` as the label primary key and FK to `inventory_items(id)`.
+- Rebuilds the raw-material category lookup index as `(category_id, inventory_item_id)`.
+
+Why:
+
+- Raw Materials, Labels, and Bottles/Lids are all inventory extension tables.
+- Keeping `inventory_item_id` in these tables makes their ledger relationship explicit and consistent with `inventory_lots`, `inventory_balances`, and `inventory_movements`.
 
 ## Relationship Summary
 

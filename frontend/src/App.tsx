@@ -11,11 +11,16 @@ import VendorsPage from '@/pages/VendorsPage'
 import EmployeesPage from '@/pages/EmployeesPage'
 import ExpensesPage from '@/pages/ExpensesPage'
 import FinishedGoodsPage from '@/pages/FinishedGoodsPage'
+import InventoryPage from '@/pages/InventoryPage'
+import InventoryManagementPage from '@/pages/InventoryManagementPage'
+import InventoryRecordsPage from '@/pages/InventoryRecordsPage'
 import ManufacturingReportsPage from '@/pages/ManufacturingReportsPage'
+import StartManufacturingPage from '@/pages/StartManufacturingPage'
 import PurchaseOrdersPage from '@/pages/PurchaseOrdersPage'
+import SendItemsPage from '@/pages/SendItemsPage'
 import ProductPriceCalculatorPage from '@/pages/ProductPriceCalculatorPage'
 import MixingPage from '@/pages/manufacturing/MixingPage'
-import NJPPage from '@/pages/manufacturing/NJPPage'
+import EncapsulationPage from '@/pages/manufacturing/EncapsulationPage'
 import AssemblyPage from '@/pages/manufacturing/AssemblyPage'
 
 function Layout() {
@@ -32,11 +37,16 @@ function Layout() {
           <Route path="/vendors" element={<VendorsPage />} />
           <Route path="/employees" element={<EmployeesPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
+          <Route path="/inventory-management" element={<InventoryManagementPage />} />
+          <Route path="/inventory" element={<InventoryPage />} />
+          <Route path="/inventory-records" element={<InventoryRecordsPage />} />
           <Route path="/finished-goods" element={<FinishedGoodsPage />} />
           <Route path="/manufacturing-reports" element={<ManufacturingReportsPage />} />
+          <Route path="/start-manufacturing" element={<StartManufacturingPage />} />
           <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+          <Route path="/send-items" element={<SendItemsPage />} />
           <Route path="/mixing" element={<MixingPage />} />
-          <Route path="/njp" element={<NJPPage />} />
+          <Route path="/encapsulation" element={<EncapsulationPage />} />
           <Route path="/assembly" element={<AssemblyPage />} />
           <Route path="/product-price-calculator" element={<ProductPriceCalculatorPage />} />
           <Route path="*" element={<HomePage />} />

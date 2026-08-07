@@ -16,11 +16,18 @@ def translate_error(error: Exception) -> ServiceError:
     if isinstance(error, SupabaseConfigurationError):
         return ServiceError(message, 503)
     lowered = message.lower()
-    if "duplicate key" in lowered or "unique constraint" in lowered:
+    if "duplicate key" in lowered or "unique constraint" in lowered or "already been consumed" in lowered:
         return ServiceError(message, 409)
     if "not found" in lowered or "0 rows" in lowered:
         return ServiceError(message, 404)
-    if "violates" in lowered or "invalid input" in lowered or "insufficient" in lowered:
+    if (
+        "violates" in lowered
+        or "invalid input" in lowered
+        or "insufficient" in lowered
+        or "not enough" in lowered
+        or "cannot exceed" in lowered
+        or "is required" in lowered
+    ):
         return ServiceError(message, 400)
     return ServiceError(message, 502)
 

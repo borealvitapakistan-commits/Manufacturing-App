@@ -41,7 +41,7 @@ class FinishedGoodsServiceTests(SimpleTestCase):
     def test_manual_update_is_blocked_for_generated_finished_goods(self):
         with self.assertRaisesMessage(
             ServiceError,
-            "Finished goods are generated from Mixing, NJP, and Assembly records",
+            "Finished goods are generated from Mixing, Encapsulation, and Assembly records",
         ):
             FinishedGoodsService.update_with_history(
                 "finished-id",
@@ -52,6 +52,6 @@ class FinishedGoodsServiceTests(SimpleTestCase):
     def test_manual_delete_is_blocked_for_generated_finished_goods(self):
         with self.assertRaisesMessage(
             ServiceError,
-            "Finished goods are generated from Mixing, NJP, and Assembly records",
+            "Finished goods are generated from Mixing, Encapsulation, and Assembly records",
         ):
             FinishedGoodsService.delete("finished-id")

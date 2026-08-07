@@ -15,7 +15,7 @@ class AssemblyReportListView(APIView):
                 "data": list_assembly_reports(
                     brand_id=values.get("brandId") or None,
                     product_id=values.get("productId") or None,
-                    njp_id=values.get("njpId") or None,
+                    njp_id=values.get("encapsulationId") or values.get("njpId") or None,
                     search=values.get("search") or None,
                     from_date=values.get("fromDate"),
                     to_date=values.get("toDate"),

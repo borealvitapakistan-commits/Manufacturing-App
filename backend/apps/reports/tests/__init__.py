@@ -1,9 +1,9 @@
 from .assembly import AssemblyReportAPITests
+from .encapsulation import EncapsulationReportAPITests
 from .mixing import MixingReportAPITests
-from .njp import NJPReportAPITests
 
 __all__ = [
     "AssemblyReportAPITests",
+    "EncapsulationReportAPITests",
     "MixingReportAPITests",
-    "NJPReportAPITests",
 ]

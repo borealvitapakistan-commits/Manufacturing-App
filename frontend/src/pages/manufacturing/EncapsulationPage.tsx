@@ -16,9 +16,9 @@ import {
   useToast
 } from '@/components/ui'
 import {
-  fetchLocalNJP,
+  fetchLocalEncapsulation,
   fetchLocalMixings,
-  saveLocalNJP
+  saveLocalEncapsulation
 } from '@/lib/supabase/data'
 
 const EMPTY_CAPSULE_UNIT_WEIGHT_MG = 123
@@ -86,9 +86,9 @@ interface LocalMixingIngredient {
   labelClaimMg?: number | string | null
 }
 
-interface LocalNJPForm {
+interface LocalEncapsulationForm {
   mixingId: string
-  njpCode: string
+  encapsulationCode: string
   lotNumber: string
   capsuleSize: string
   location: string
@@ -115,14 +115,14 @@ interface LocalNJPForm {
   operatorName: string
 }
 
-interface LocalNJPTimeLogForm {
+interface LocalEncapsulationTimeLogForm {
   date: string
   startTime: string
   endTime: string
   remarks: string
 }
 
-interface LocalNJPTimeLogSource {
+interface LocalEncapsulationTimeLogSource {
   date?: number | { seconds: number } | string | null
   startDate?: number | { seconds: number } | string | null
   startTime?: string | null
@@ -131,11 +131,11 @@ interface LocalNJPTimeLogSource {
   remarks?: string | null
 }
 
-interface LocalNJPRecord {
+interface LocalEncapsulationRecord {
   id: string
   mixingId?: string | null
   mixingCode?: string | null
-  njpCode?: string | null
+  encapsulationCode?: string | null
   lotNumber?: string | null
   capsuleSize?: string | null
   location?: string | null
@@ -144,7 +144,7 @@ interface LocalNJPRecord {
   machineModel?: string | null
   machineSpeed?: string | null
   rawMaterialReceivedKg?: number | string | null
-  mixingUsedInNJPkg?: number | string | null
+  mixingUsedInEncapsulationKg?: number | string | null
   targetFillWeightMg?: number | string | null
   totalCapsulesProducedKg?: number | string | null
   totalCapsulesFilledQty?: number | string | null
@@ -159,15 +159,17 @@ interface LocalNJPRecord {
   endDate?: number | { seconds: number } | string | null
   endTime?: string | null
   productionDate?: number | { seconds: number } | string | null
-  status?: LocalNJPForm['status'] | 'In NJP' | 'NJP Completed' | string | null
+  status?: LocalEncapsulationForm['status'] | 'In Encapsulation' | 'Encapsulation Completed' | string | null
   remarks?: string | null
   reason?: string | null
   changeReason?: string | null
   operatorName?: string | null
-  njpSessions?: LocalNJPTimeLogSource[]
-  njpTimeLogs?: LocalNJPTimeLogSource[]
-  timeLogs?: LocalNJPTimeLogSource[]
+  encapsulationSessions?: LocalEncapsulationTimeLogSource[]
+  encapsulationTimeLogs?: LocalEncapsulationTimeLogSource[]
+  timeLogs?: LocalEncapsulationTimeLogSource[]
   loadChecks?: Partial<LoadCheck>[]
+  availableCapsulesQty?: number | string | null
+  remainingCapsulesQty?: number | string | null
 }
 
 
@@ -378,7 +380,7 @@ function emptyLoadCheck(): LoadCheck {
   }
 }
 
-function emptyNJPTimeLog(): LocalNJPTimeLogForm {
+function emptyEncapsulationTimeLog(): LocalEncapsulationTimeLogForm {
   return {
     date: todayInput(),
     startTime: '',
@@ -387,10 +389,10 @@ function emptyNJPTimeLog(): LocalNJPTimeLogForm {
   }
 }
 
-function emptyLocalNJPForm(): LocalNJPForm {
+function emptyLocalEncapsulationForm(): LocalEncapsulationForm {
   return {
     mixingId: '',
-    njpCode: '',
+    encapsulationCode: '',
     lotNumber: '',
     capsuleSize: '00',
     location: '',
@@ -422,22 +424,22 @@ function formValue(value: string | number | boolean | null | undefined): string 
   return value === null || value === undefined ? '' : String(value)
 }
 
-function normalizeNJPStatus(value: LocalNJPRecord['status']): LocalNJPForm['status'] {
+function normalizeEncapsulationStatus(value: LocalEncapsulationRecord['status']): LocalEncapsulationForm['status'] {
   const text = String(value || '').trim().toLowerCase()
-  return text === 'completed' || text === 'njp completed' ? 'Completed' : 'Underprocess'
+  return text === 'completed' || text === 'encapsulation completed' ? 'Completed' : 'Underprocess'
 }
 
-function sourceTimeLogs(record: LocalNJPRecord): LocalNJPTimeLogSource[] {
-  return record.njpSessions?.length
-    ? record.njpSessions
-    : record.njpTimeLogs?.length
-      ? record.njpTimeLogs
+function sourceTimeLogs(record: LocalEncapsulationRecord): LocalEncapsulationTimeLogSource[] {
+  return record.encapsulationSessions?.length
+    ? record.encapsulationSessions
+    : record.encapsulationTimeLogs?.length
+      ? record.encapsulationTimeLogs
       : record.timeLogs || []
 }
 
-function timeLogsFromRecord(record: LocalNJPRecord): LocalNJPTimeLogForm[] {
+function timeLogsFromRecord(record: LocalEncapsulationRecord): LocalEncapsulationTimeLogForm[] {
   const rows = sourceTimeLogs(record)
-  if (!rows.length) return [emptyNJPTimeLog()]
+  if (!rows.length) return [emptyEncapsulationTimeLog()]
 
   return rows.map(row => ({
     date: toDateInput(row.date || row.startDate) || todayInput(),
@@ -447,7 +449,7 @@ function timeLogsFromRecord(record: LocalNJPRecord): LocalNJPTimeLogForm[] {
   }))
 }
 
-function loadChecksFromRecord(record: LocalNJPRecord): LoadCheck[] {
+function loadChecksFromRecord(record: LocalEncapsulationRecord): LoadCheck[] {
   const rows = record.loadChecks || []
   if (!rows.length) return [emptyLoadCheck()]
 
@@ -463,17 +465,17 @@ function loadChecksFromRecord(record: LocalNJPRecord): LoadCheck[] {
   }))
 }
 
-function formFromRecord(record: LocalNJPRecord): LocalNJPForm {
+function formFromRecord(record: LocalEncapsulationRecord): LocalEncapsulationForm {
   return {
     mixingId: record.mixingId || '',
-    njpCode: record.njpCode || '',
+    encapsulationCode: record.encapsulationCode || '',
     lotNumber: record.lotNumber || record.mixingCode || '',
     capsuleSize: record.capsuleSize || '00',
     location: record.location || record.rackNo || '',
     bucket: record.bucket || '',
     machineModel: record.machineModel || '',
     machineSpeed: record.machineSpeed || '',
-    rawMaterialReceivedKg: formValue(record.rawMaterialReceivedKg ?? record.mixingUsedInNJPkg),
+    rawMaterialReceivedKg: formValue(record.rawMaterialReceivedKg ?? record.mixingUsedInEncapsulationKg),
     targetFillWeightMg: formValue(record.targetFillWeightMg),
     totalCapsulesProducedKg: formValue(record.totalCapsulesProducedKg),
     totalCapsulesFilledQty: formValue(record.totalCapsulesFilledQty ?? record.netCapsulesFilledQty),
@@ -487,7 +489,7 @@ function formFromRecord(record: LocalNJPRecord): LocalNJPForm {
     endDate: toDateInput(record.endDate),
     endTime: record.endTime || '',
     productionDate: toDateInput(record.productionDate) || todayInput(),
-    status: normalizeNJPStatus(record.status),
+    status: normalizeEncapsulationStatus(record.status),
     remarks: record.remarks || '',
     reason: record.reason || record.changeReason || '',
     operatorName: record.operatorName || ''
@@ -495,10 +497,10 @@ function formFromRecord(record: LocalNJPRecord): LocalNJPForm {
 }
 
 // ============================================================================
-// Local NJP Create Page
+// Local Encapsulation Create Page
 // ============================================================================
 
-export default function NJPCreatePage() {
+export default function EncapsulationCreatePage() {
   const { showToast } = useToast()
   const [searchParams] = useSearchParams()
   const editId = searchParams.get('edit')
@@ -506,9 +508,9 @@ export default function NJPCreatePage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [mixings, setMixings] = useState<LocalMixingRecord[]>([])
-  const [editingRecord, setEditingRecord] = useState<LocalNJPRecord | null>(null)
-  const [form, setForm] = useState<LocalNJPForm>(() => emptyLocalNJPForm())
-  const [timeLogs, setTimeLogs] = useState<LocalNJPTimeLogForm[]>(() => [emptyNJPTimeLog()])
+  const [editingRecord, setEditingRecord] = useState<LocalEncapsulationRecord | null>(null)
+  const [form, setForm] = useState<LocalEncapsulationForm>(() => emptyLocalEncapsulationForm())
+  const [timeLogs, setTimeLogs] = useState<LocalEncapsulationTimeLogForm[]>(() => [emptyEncapsulationTimeLog()])
   const [loadChecks, setLoadChecks] = useState<LoadCheck[]>(() => [emptyLoadCheck()])
 
   const selectedMixing = useMemo(
@@ -526,14 +528,14 @@ export default function NJPCreatePage() {
     Math.abs((numOrNull(form.targetFillWeightMg) || 0) - sourceTargetFillWeightMg) > 0.0001
   )
 
-  const njpMixKg = useMemo(() => {
+  const encapsulationMixKg = useMemo(() => {
     const received = numOrNull(form.rawMaterialReceivedKg)
     if (received !== null) return received
     return availableKgFromMixing(selectedMixing)
   }, [form.rawMaterialReceivedKg, selectedMixing])
   const currentCapsuleSummary = useMemo(
-    () => capsuleQuantitySummary(njpMixKg, form.targetFillWeightMg, form.rejectedCapsulesQty),
-    [form.rejectedCapsulesQty, form.targetFillWeightMg, njpMixKg]
+    () => capsuleQuantitySummary(encapsulationMixKg, form.targetFillWeightMg, form.rejectedCapsulesQty),
+    [form.rejectedCapsulesQty, form.targetFillWeightMg, encapsulationMixKg]
   )
   const yieldPercent = currentCapsuleSummary.yieldPercent
   const currentEmptyCapsuleWeightKg = currentCapsuleSummary.emptyCapsuleKg
@@ -543,49 +545,49 @@ export default function NJPCreatePage() {
   )
   const previousUsageForSameMixing = useMemo(() => {
     if (!editingRecord || !selectedMixing || editingRecord.mixingId !== selectedMixing.id) return 0
-    return Number(editingRecord.rawMaterialReceivedKg ?? editingRecord.mixingUsedInNJPkg ?? 0) || 0
+    return Number(editingRecord.rawMaterialReceivedKg ?? editingRecord.mixingUsedInEncapsulationKg ?? 0) || 0
   }, [editingRecord, selectedMixing])
   const availableForThisSave = currentAvailableMixingKg + previousUsageForSameMixing
-  const remainingMixingAfterNJP = useMemo(() => {
+  const remainingMixingAfterEncapsulation = useMemo(() => {
     const used = numOrNull(form.rawMaterialReceivedKg)
     if (!selectedMixing || used === null) return null
     return Math.max(0, availableForThisSave - used)
   }, [availableForThisSave, form.rawMaterialReceivedKg, selectedMixing])
 
   useEffect(() => {
-    async function loadNJPForm() {
+    async function loadEncapsulationForm() {
       try {
         setLoading(true)
         setError('')
         const [rows, record] = await Promise.all([
-          fetchLocalMixings({ limit: 500 }),
-          editId ? fetchLocalNJP(editId) : Promise.resolve(null)
+          fetchLocalMixings({ limit: 200 }),
+          editId ? fetchLocalEncapsulation(editId) : Promise.resolve(null)
         ])
         setMixings(rows as LocalMixingRecord[])
         if (record) {
-          const njpRecord = record as LocalNJPRecord
-          setEditingRecord(njpRecord)
-          setForm(formFromRecord(njpRecord))
-          setTimeLogs(timeLogsFromRecord(njpRecord))
-          setLoadChecks(loadChecksFromRecord(njpRecord))
+          const encapsulationRecord = record as LocalEncapsulationRecord
+          setEditingRecord(encapsulationRecord)
+          setForm(formFromRecord(encapsulationRecord))
+          setTimeLogs(timeLogsFromRecord(encapsulationRecord))
+          setLoadChecks(loadChecksFromRecord(encapsulationRecord))
         } else {
           setEditingRecord(null)
-          setForm(emptyLocalNJPForm())
-          setTimeLogs([emptyNJPTimeLog()])
+          setForm(emptyLocalEncapsulationForm())
+          setTimeLogs([emptyEncapsulationTimeLog()])
           setLoadChecks([emptyLoadCheck()])
         }
       } catch (err) {
-        console.error('Failed to load NJP form:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load NJP form.')
+        console.error('Failed to load Encapsulation form:', err)
+        setError(err instanceof Error ? err.message : 'Failed to load Encapsulation form.')
       } finally {
         setLoading(false)
       }
     }
 
-    loadNJPForm()
+    loadEncapsulationForm()
   }, [editId])
 
-  const updateField = <K extends keyof LocalNJPForm>(key: K, value: LocalNJPForm[K]) => {
+  const updateField = <K extends keyof LocalEncapsulationForm>(key: K, value: LocalEncapsulationForm[K]) => {
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
@@ -594,7 +596,7 @@ export default function NJPCreatePage() {
     const targetFillWeightMg = targetFillWeightFromMixing(mixing)
     const restoredUsageKg =
       editingRecord && mixing && editingRecord.mixingId === mixing.id
-        ? Number(editingRecord.rawMaterialReceivedKg ?? editingRecord.mixingUsedInNJPkg ?? 0) || 0
+        ? Number(editingRecord.rawMaterialReceivedKg ?? editingRecord.mixingUsedInEncapsulationKg ?? 0) || 0
         : 0
     const mixKg = availableKgFromMixing(mixing) + restoredUsageKg
     const capsuleSummary = capsuleQuantitySummary(
@@ -616,14 +618,14 @@ export default function NJPCreatePage() {
 
   useEffect(() => {
     if (!selectedMixing || !form.targetFillWeightMg) return
-    const capsuleSummary = capsuleQuantitySummary(njpMixKg, form.targetFillWeightMg, form.rejectedCapsulesQty)
+    const capsuleSummary = capsuleQuantitySummary(encapsulationMixKg, form.targetFillWeightMg, form.rejectedCapsulesQty)
     setForm(prev => {
       const nextValue = capsuleSummary.netCapsules === null ? '' : String(capsuleSummary.netCapsules)
       const nextProducedKg = capsuleSummary.producedKg === null ? '' : String(capsuleSummary.producedKg)
       if (prev.totalCapsulesFilledQty === nextValue && prev.totalCapsulesProducedKg === nextProducedKg) return prev
       return { ...prev, totalCapsulesFilledQty: nextValue, totalCapsulesProducedKg: nextProducedKg }
     })
-  }, [selectedMixing, form.targetFillWeightMg, form.rejectedCapsulesQty, njpMixKg])
+  }, [selectedMixing, form.targetFillWeightMg, form.rejectedCapsulesQty, encapsulationMixKg])
 
   const handleLoadChange = (index: number, field: keyof LoadCheck, value: string) => {
     setLoadChecks(rows => {
@@ -635,7 +637,7 @@ export default function NJPCreatePage() {
     })
   }
 
-  const handleTimeLogChange = (index: number, field: keyof LocalNJPTimeLogForm, value: string) => {
+  const handleTimeLogChange = (index: number, field: keyof LocalEncapsulationTimeLogForm, value: string) => {
     setTimeLogs(rows => {
       const next = [...rows]
       next[index] = { ...next[index], [field]: value }
@@ -643,10 +645,10 @@ export default function NJPCreatePage() {
     })
   }
 
-  const addTimeLog = () => setTimeLogs(rows => [...rows, emptyNJPTimeLog()])
+  const addTimeLog = () => setTimeLogs(rows => [...rows, emptyEncapsulationTimeLog()])
 
   const removeTimeLog = (index: number) => {
-    setTimeLogs(rows => rows.length <= 1 ? [emptyNJPTimeLog()] : rows.filter((_, idx) => idx !== index))
+    setTimeLogs(rows => rows.length <= 1 ? [emptyEncapsulationTimeLog()] : rows.filter((_, idx) => idx !== index))
   }
 
   const addLoadCheck = () => setLoadChecks(rows => [...rows, emptyLoadCheck()])
@@ -661,8 +663,8 @@ export default function NJPCreatePage() {
       setTimeLogs(timeLogsFromRecord(editingRecord))
       setLoadChecks(loadChecksFromRecord(editingRecord))
     } else {
-      setForm(emptyLocalNJPForm())
-      setTimeLogs([emptyNJPTimeLog()])
+      setForm(emptyLocalEncapsulationForm())
+      setTimeLogs([emptyEncapsulationTimeLog()])
       setLoadChecks([emptyLoadCheck()])
     }
     setError('')
@@ -670,7 +672,7 @@ export default function NJPCreatePage() {
 
   const handleSubmit = async () => {
     if (!form.mixingId) {
-      setError('Select the Mixing you want to use for NJP.')
+      setError('Select the Mixing you want to use for Encapsulation.')
       return
     }
     if (!selectedMixing) {
@@ -681,7 +683,7 @@ export default function NJPCreatePage() {
     const usedMixingKg = numOrNull(form.rawMaterialReceivedKg)
     const availableMixingKg = availableForThisSave
     if (usedMixingKg === null || usedMixingKg <= 0) {
-      setError('Enter how many kg of available Mixing you want to use for NJP.')
+      setError('Enter how many kg of available Mixing you want to use for Encapsulation.')
       return
     }
     if (usedMixingKg > availableMixingKg + 0.0005) {
@@ -745,7 +747,7 @@ export default function NJPCreatePage() {
       const payload = {
         id: editId || undefined,
         mixingId: form.mixingId,
-        njpCode: form.njpCode.trim() || undefined,
+        encapsulationCode: form.encapsulationCode.trim() || undefined,
         lotNumber: selectedMixing?.mixingCode || form.lotNumber.trim() || undefined,
         capsuleSize: form.capsuleSize.trim() || undefined,
         location: form.location.trim() || undefined,
@@ -777,8 +779,8 @@ export default function NJPCreatePage() {
         endDate: lastTimeLog?.endDate ?? null,
         endTime: lastTimeLog?.endTime ?? null,
         productionDate: firstTimeLog?.date ?? null,
-        njpSessions: cleanedTimeLogs,
-        njpTimeLogs: cleanedTimeLogs,
+        encapsulationSessions: cleanedTimeLogs,
+        encapsulationTimeLogs: cleanedTimeLogs,
         timeLogs: cleanedTimeLogs,
         status: form.status,
         loadChecks: cleanedLoadChecks,
@@ -787,16 +789,16 @@ export default function NJPCreatePage() {
         operatorName: form.operatorName.trim() || null
       }
 
-      const saved = await saveLocalNJP(payload)
+      const saved = await saveLocalEncapsulation(payload)
       try {
-        const refreshedMixings = await fetchLocalMixings({ limit: 500 })
+        const refreshedMixings = await fetchLocalMixings({ limit: 200 })
         setMixings(refreshedMixings as LocalMixingRecord[])
       } catch (refreshError) {
-        console.error('NJP saved, but failed to refresh Mixing availability:', refreshError)
+        console.error('Encapsulation saved, but failed to refresh Mixing availability:', refreshError)
       }
-      showToast({ message: editId ? 'NJP updated' : 'NJP saved from selected Mixing', type: 'success' })
+      showToast({ message: editId ? 'Encapsulation updated' : 'Encapsulation saved from selected Mixing', type: 'success' })
       if (editId && saved) {
-        const savedRecord = saved as LocalNJPRecord
+        const savedRecord = saved as LocalEncapsulationRecord
         setEditingRecord(savedRecord)
         setForm(formFromRecord(savedRecord))
         setTimeLogs(timeLogsFromRecord(savedRecord))
@@ -805,21 +807,21 @@ export default function NJPCreatePage() {
         handleReset()
       }
     } catch (err) {
-      console.error('Failed to save NJP:', err)
-      setError(err instanceof Error ? err.message : 'Failed to save NJP.')
+      console.error('Failed to save Encapsulation:', err)
+      setError(err instanceof Error ? err.message : 'Failed to save Encapsulation.')
     } finally {
       setSaving(false)
     }
   }
 
   if (loading) {
-    return <div className="py-10 text-zinc-500">Loading NJP form...</div>
+    return <div className="py-10 text-zinc-500">Loading Encapsulation form...</div>
   }
 
   return (
     <div className="space-y-6">
       <div className="border-b border-zinc-200 pb-4">
-        <h1 className="text-2xl font-bold">{editId ? 'Edit NJP/Encapsulation' : 'Create NJP/Encapsulation'}</h1>
+        <h1 className="text-2xl font-bold">{editId ? 'Edit Encapsulation' : 'Create Encapsulation'}</h1>
       </div>
 
       {error && (
@@ -846,7 +848,7 @@ export default function NJPCreatePage() {
             </select>
             {mixings.length === 0 && (
               <p className="mt-2 text-sm text-amber-700">
-                No saved Mixing is available yet. Create Mixing first, then create NJP from it.
+                No saved Mixing is available yet. Create Mixing first, then create Encapsulation from it.
               </p>
             )}
           </div>
@@ -888,22 +890,22 @@ export default function NJPCreatePage() {
 
       <section className="border-b border-zinc-200 pb-6">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">NJP Details</h2>
+          <h2 className="text-lg font-semibold">Encapsulation Details</h2>
           <div className="flex gap-2">
             <Button type="button" variant="ghost" onClick={handleReset}>Reset Form</Button>
             <Button type="button" onClick={handleSubmit} loading={saving} disabled={saving}>
-              {editId ? 'Update NJP' : 'Save NJP'}
+              {editId ? 'Update Encapsulation' : 'Save Encapsulation'}
             </Button>
           </div>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <div>
-            <Label>NJP Code</Label>
+            <Label>Encapsulation Code</Label>
             <Input
               placeholder="Auto-generated"
-              value={form.njpCode}
-              onChange={event => updateField('njpCode', event.target.value)}
+              value={form.encapsulationCode}
+              onChange={event => updateField('encapsulationCode', event.target.value)}
             />
           </div>
           <div>
@@ -962,8 +964,8 @@ export default function NJPCreatePage() {
             />
             {selectedMixing && (
               <p className="mt-1 text-xs text-zinc-500">
-                NJP formulas use this kg from Available Mixing, not Total Mixing. Available for this save: {availableForThisSave.toFixed(4)} kg
-                {remainingMixingAfterNJP === null ? '' : `; remaining after save: ${remainingMixingAfterNJP.toFixed(4)} kg`}
+                Encapsulation formulas use this kg from Available Mixing, not Total Mixing. Available for this save: {availableForThisSave.toFixed(4)} kg
+                {remainingMixingAfterEncapsulation === null ? '' : `; remaining after save: ${remainingMixingAfterEncapsulation.toFixed(4)} kg`}
               </p>
             )}
           </div>
@@ -1000,6 +1002,12 @@ export default function NJPCreatePage() {
                 Gross calculated: {currentCapsuleSummary.grossCapsules}; rejected: {currentCapsuleSummary.rejected}; good capsules: {currentCapsuleSummary.netCapsules}
               </p>
             )}
+            {editingRecord && (
+              <p className="mt-1 text-xs text-zinc-500">
+                Available for Assembly: {Number(editingRecord.availableCapsulesQty ?? editingRecord.remainingCapsulesQty ?? 0)} capsules
+                {' '}(capsules already used by Assembly are not counted here).
+              </p>
+            )}
           </div>
           <div>
             <Label>Total Capsules Produced Kg</Label>
@@ -1028,7 +1036,7 @@ export default function NJPCreatePage() {
             <select
               className="min-h-12 w-full border border-zinc-300 bg-white px-3 py-2 text-base focus:border-[#1D838D] focus:ring-2 focus:ring-[#1D838D]/30 sm:text-sm"
               value={form.status}
-              onChange={event => updateField('status', event.target.value as LocalNJPForm['status'])}
+              onChange={event => updateField('status', event.target.value as LocalEncapsulationForm['status'])}
             >
               <option value="Underprocess">Underprocess</option>
               <option value="Completed">Completed</option>
@@ -1073,7 +1081,7 @@ export default function NJPCreatePage() {
       <section className="border-b border-zinc-200 pb-6">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">NJP Daily Time Log</h2>
+            <h2 className="text-lg font-semibold">Encapsulation Daily Time Log</h2>
             <p className="text-sm text-zinc-600">
               Use one row per day. This keeps start and end time attached to the correct date.
             </p>
@@ -1115,7 +1123,7 @@ export default function NJPCreatePage() {
               <div>
                 <Label>Day Remarks</Label>
                 <Input
-                  placeholder="Example: Day 1 NJP completed"
+                  placeholder="Example: Day 1 Encapsulation completed"
                   value={row.remarks}
                   onChange={event => handleTimeLogChange(index, 'remarks', event.target.value)}
                 />
@@ -1132,7 +1140,7 @@ export default function NJPCreatePage() {
 
       <section className="border-b border-zinc-200 pb-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Load Checks</h2>
+          <h2 className="text-lg font-semibold">Encapsulation Load Checks</h2>
           <Button type="button" variant="subtle" onClick={addLoadCheck}>Add Load</Button>
         </div>
         <div className="overflow-x-auto">

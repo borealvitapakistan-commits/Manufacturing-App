@@ -3,6 +3,8 @@ from django.urls import path
 from .views import (
     AssemblyReportDetailView,
     AssemblyReportListView,
+    EncapsulationReportDetailView,
+    EncapsulationReportListView,
     MixingReportDetailView,
     MixingReportListView,
     NJPReportDetailView,
@@ -13,6 +15,12 @@ from .views import (
 urlpatterns = [
     path("mixing/", MixingReportListView.as_view(), name="report-mixing-list"),
     path("mixing/<str:item_id>/", MixingReportDetailView.as_view(), name="report-mixing-detail"),
+    path("encapsulation/", EncapsulationReportListView.as_view(), name="report-encapsulation-list"),
+    path(
+        "encapsulation/<str:item_id>/",
+        EncapsulationReportDetailView.as_view(),
+        name="report-encapsulation-detail",
+    ),
     path("njp/", NJPReportListView.as_view(), name="report-njp-list"),
     path("njp/<str:item_id>/", NJPReportDetailView.as_view(), name="report-njp-detail"),
     path("assembly/", AssemblyReportListView.as_view(), name="report-assembly-list"),

@@ -6,7 +6,6 @@ from typing import Any
 
 from apps.inventory.services.bottles_lids import BOTTLE_TYPES, CAPSULE_TYPES, BottleLidService
 from apps.inventory.services.labels import LabelService
-from apps.manufacturing.services.njp import NJPService
 from services import db
 from services.base_service import ServiceError
 from services.converters import to_json_value
@@ -215,57 +214,6 @@ class AssemblyRules:
         return cls._brand_code_prefix_for_ref(refs[0])
 
     @staticmethod
-    def _record_codes(record: dict[str, Any]) -> list[str]:
-        codes = [
-            str(record.get("assemblyCode") or ""),
-            str(record.get("batchCode") or ""),
-        ]
-        for item in record.get("brandBatchCodes") or []:
-            if isinstance(item, dict):
-                codes.append(str(item.get("batchCode") or item.get("assemblyCode") or ""))
-        return [code for code in codes if code]
-
-    @classmethod
-    def _next_code(
-        cls,
-        records: list[dict[str, Any]],
-        brand_prefix: str,
-        *,
-        reserved_codes: set[str] | None = None,
-    ) -> str:
-        highest = 0
-        for record in records:
-            for code in cls._record_codes(record):
-                if not code.startswith(brand_prefix):
-                    continue
-                suffix = code[len(brand_prefix):]
-                if suffix.isdigit():
-                    highest = max(highest, int(suffix))
-
-        for code in reserved_codes or set():
-            if code.startswith(brand_prefix):
-                suffix = code[len(brand_prefix):]
-                if suffix.isdigit():
-                    highest = max(highest, int(suffix))
-        return f"{brand_prefix}{highest + 1:03d}"
-
-    @classmethod
-    def _ensure_unique_code(
-        cls,
-        records: list[dict[str, Any]],
-        assembly_code: str,
-        *,
-        current_id: str | None = None,
-    ) -> None:
-        normalized = assembly_code.strip().lower()
-        for record in records:
-            if current_id and str(record.get("id")) == current_id:
-                continue
-            for code in cls._record_codes(record):
-                if code.strip().lower() == normalized:
-                    raise ServiceError("Batch code already exists", 409)
-
-    @staticmethod
     def _batch_code_display(brand_batch_codes: list[dict[str, Any]], fallback: str) -> str:
         if len(brand_batch_codes) <= 1:
             return fallback
@@ -274,19 +222,6 @@ class AssemblyRules:
             for item in brand_batch_codes
         )
 
-    @classmethod
-    def _existing_brand_batch_codes(cls, existing: dict[str, Any]) -> dict[str, str]:
-        saved: dict[str, str] = {}
-        for item in existing.get("brandBatchCodes") or []:
-            if not isinstance(item, dict):
-                continue
-            code = cls._as_text(item.get("batchCode") or item.get("assemblyCode"))
-            if not code:
-                continue
-            key = cls._as_text(item.get("brandId")) or cls._as_text(item.get("brandName")).lower()
-            if key:
-                saved[key] = code
-        return saved
 
     @classmethod
     def _public_record(cls, record: dict[str, Any]) -> dict[str, Any]:
@@ -305,7 +240,7 @@ class AssemblyRules:
     @classmethod
     def _find_njp(cls, njp_id: str) -> dict[str, Any]:
         raise ServiceError(
-            "Selected NJP record was not found. Save NJP first, then create Assembly from it.",
+            "Selected Encapsulation record was not found. Save Encapsulation first, then create Assembly from it.",
             404,
         )
 
@@ -319,7 +254,7 @@ class AssemblyRules:
             if str(record.get("id")) == str(njp_id):
                 return record
         raise ServiceError(
-            "Selected NJP record was not found. Save NJP first, then create Assembly from it.",
+            "Selected Encapsulation record was not found. Save Encapsulation first, then create Assembly from it.",
             404,
         )
 
@@ -399,7 +334,7 @@ class AssemblyRules:
 
     @classmethod
     def _assembly_usage(cls, record: dict[str, Any]) -> tuple[str, int]:
-        njp_id = cls._as_text(record.get("njpId"))
+        njp_id = cls._as_text(record.get("encapsulationId") or record.get("njpId"))
         used_qty = cls._as_int_or_none(record.get("capsulesReceivedQty")) or 0
         return njp_id, int(used_qty)
 
@@ -550,18 +485,16 @@ class AssemblyRules:
         payload: dict[str, Any],
         *,
         existing: dict[str, Any] | None = None,
-        records: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         existing = existing or {}
-        records = records or []
 
         njp_id = cls._as_text(
-            payload.get("njpId")
-            if "njpId" in payload
-            else existing.get("njpId")
+            payload.get("encapsulationId") or payload.get("njpId")
+            if ("encapsulationId" in payload or "njpId" in payload)
+            else (existing.get("encapsulationId") or existing.get("njpId"))
         )
         if not njp_id:
-            raise ServiceError("Select the NJP capsule record that will be used for Assembly.", 400)
+            raise ServiceError("Select the Encapsulation capsule record that will be used for Assembly.", 400)
 
         njp = cls._find_njp(njp_id)
         requested_brand_id = cls._as_text(cls._pick(payload, existing, "brandId", ""))
@@ -574,57 +507,35 @@ class AssemblyRules:
         brand_names = [brand["name"] for brand in brand_refs if brand.get("name")]
 
         if requested_brand_id and brand_ids and requested_brand_id not in brand_ids:
-            raise ServiceError("Selected NJP does not belong to the selected brand.", 400)
+            raise ServiceError("Selected Encapsulation does not belong to the selected brand.", 400)
         if requested_brand_id and not brand_ids and njp_brand_id and requested_brand_id != njp_brand_id:
-            raise ServiceError("Selected NJP does not belong to the selected brand.", 400)
+            raise ServiceError("Selected Encapsulation does not belong to the selected brand.", 400)
         if requested_product_id and njp_product_id and requested_product_id != njp_product_id:
-            raise ServiceError("Selected NJP does not belong to the selected product.", 400)
+            raise ServiceError("Selected Encapsulation does not belong to the selected product.", 400)
 
-        current_id = str(existing.get("id") or "") or None
-        requested_code = cls._as_text(
-            cls._pick(
-                payload,
-                existing,
-                "assemblyCode",
-                cls._pick(payload, existing, "batchCode", ""),
+        # Assembly Code itself is generated transaction-safely by the
+        # save_assembly()/next_brand_batch_code() database functions (see
+        # supabase/migrations-2/014_...). This is only a friendly, early
+        # validation pass so a missing brand code prefix is reported before
+        # any database write is attempted.
+        if not brand_refs:
+            raise ServiceError(
+                "Brand code prefix is required to generate Assembly code. Add Code Prefix in Brands first.",
+                400,
             )
-        )
-        if requested_code.upper().startswith("ASM-"):
-            requested_code = ""
-        brand_batch_codes: list[dict[str, Any]] = []
+        for brand_ref in brand_refs:
+            cls._brand_code_prefix_for_ref(brand_ref)
 
-        if len(brand_refs) > 1:
-            saved_codes = cls._existing_brand_batch_codes(existing)
-            reserved_codes: set[str] = set()
-            for brand_ref in brand_refs:
-                brand_key = cls._as_text(brand_ref.get("id")) or cls._as_text(
-                    brand_ref.get("name")
-                ).lower()
-                prefix = cls._brand_code_prefix_for_ref(brand_ref)
-                batch_code = saved_codes.get(brand_key) or cls._next_code(
-                    records,
-                    prefix,
-                    reserved_codes=reserved_codes,
-                )
-                if batch_code.upper().startswith("ASM-"):
-                    batch_code = cls._next_code(records, prefix, reserved_codes=reserved_codes)
-                while batch_code in reserved_codes:
-                    batch_code = cls._next_code(records, prefix, reserved_codes=reserved_codes)
-                cls._ensure_unique_code(records, batch_code, current_id=current_id)
-                reserved_codes.add(batch_code)
-                brand_batch_codes.append(
-                    {
-                        "brandId": brand_ref.get("id") or "",
-                        "brandName": brand_ref.get("name") or "",
-                        "codePrefix": prefix,
-                        "batchCode": batch_code,
-                    }
-                )
-            assembly_code = brand_batch_codes[0]["batchCode"]
-        else:
-            brand_prefix = cls._brand_code_prefix(njp)
-            assembly_code = requested_code or cls._next_code(records, brand_prefix)
-            cls._ensure_unique_code(records, assembly_code, current_id=current_id)
+        # Assembly Code / Batch Code are read-only after creation - once an
+        # Assembly exists, always keep whatever the database already
+        # assigned rather than anything the client might send.
+        assembly_code = existing.get("assemblyCode") or ""
+        brand_batch_codes = existing.get("brandBatchCodes") or []
+
+        # Batch Code is not user-entered - it comes from the source
+        # Encapsulation record's lot number (falling back to its mixing
+        # code), captured at save time.
+        batch_code = cls._as_text(njp.get("lotNumber") or njp.get("mixingCode") or "")
 
         source_capsule_weight_mg = cls._capsule_weight_mg_from_njp(njp)
         capsule_weight_mg = cls._as_float_or_none(
@@ -633,11 +544,34 @@ class AssemblyRules:
         if capsule_weight_mg is None:
             capsule_weight_mg = source_capsule_weight_mg
 
-        capsules_received_qty = cls._as_int_or_none(
-            cls._pick(payload, existing, "capsulesReceivedQty", cls._record_available_capsules(njp))
+        capsules_per_bottle = cls._as_int_or_none(
+            cls._pick(
+                payload,
+                existing,
+                "capsulesPerBottle",
+                cls._pick(payload, existing, "unitsPerBottle"),
+            )
         )
-        if capsules_received_qty is None:
-            capsules_received_qty = 0
+        if not capsules_per_bottle or capsules_per_bottle <= 0:
+            raise ServiceError("Enter Capsules per Bottle before saving Assembly.", 400)
+
+        # Bottle Quantity is the primary user input; Total Units Used is
+        # always derived from it, never entered directly.
+        bottle_quantity = cls._as_int_or_none(
+            cls._pick(
+                payload,
+                existing,
+                "bottleQuantity",
+                cls._pick(payload, existing, "totalBottlesMade"),
+            )
+        )
+        if not bottle_quantity or bottle_quantity <= 0:
+            raise ServiceError("Enter Bottle Quantity before saving Assembly.", 400)
+
+        total_bottles_made = bottle_quantity
+        total_units_used = bottle_quantity * capsules_per_bottle
+        capsules_received_qty = total_units_used
+        loose_capsules_qty = 0
 
         capsules_received_kg = cls._as_float_or_none(
             cls._pick(payload, existing, "capsulesReceivedKg")
@@ -646,20 +580,13 @@ class AssemblyRules:
         if capsules_received_kg is None:
             capsules_received_kg = calculated_capsules_received_kg
 
-        capsules_per_bottle = cls._as_int_or_none(cls._pick(payload, existing, "capsulesPerBottle"))
-        total_bottles_made = cls._as_int_or_none(cls._pick(payload, existing, "totalBottlesMade"))
-        if capsules_per_bottle and capsules_per_bottle > 0:
-            auto_bottles = capsules_received_qty // capsules_per_bottle
-            if total_bottles_made is None:
-                total_bottles_made = auto_bottles
-            if total_bottles_made * capsules_per_bottle > capsules_received_qty:
-                raise ServiceError(
-                    "Total bottles made cannot use more capsules than Capsules Received Qty. Check Capsules Per Bottle or Total Bottles Made.",
-                    400,
-                )
-            loose_capsules_qty = capsules_received_qty - (total_bottles_made * capsules_per_bottle)
-        else:
-            loose_capsules_qty = None
+        weight_unit = cls._as_text(cls._pick(payload, existing, "weightUnit", "g")) or "g"
+        if weight_unit not in {"g", "mg"}:
+            raise ServiceError("Weight unit must be g or mg.", 400)
+
+        filled_bottle_weight = cls._as_float_or_none(cls._pick(payload, existing, "filledBottleWeight"))
+        if filled_bottle_weight is not None and filled_bottle_weight <= 0:
+            raise ServiceError("Filled Bottle Weight must be greater than zero.", 400)
 
         bottle_lid = cls._resolve_bottle_lid(payload, existing, total_bottles_made)
 
@@ -675,6 +602,14 @@ class AssemblyRules:
         label_id = cls._as_text(label.get("id")) if label else cls._as_text(
             cls._pick(payload, existing, "labelId", "")
         )
+
+        if label:
+            dosage = cls._as_int_or_none(label.get("dosageType"))
+            if dosage and capsules_per_bottle > dosage:
+                raise ServiceError(
+                    f"Capsules per bottle cannot exceed the selected label dosage count of {dosage}.",
+                    400,
+                )
         bottle_lid_id = cls._as_text(bottle_lid.get("id")) if bottle_lid else ""
         selected_bottle_size = cls._selected_bottle_size(payload, existing)
         selected_bottle_type = cls._selected_bottle_type(payload, existing)
@@ -748,9 +683,11 @@ class AssemblyRules:
 
         cleaned = {
             "assemblyCode": assembly_code,
-            "batchCode": assembly_code,
+            "batchCode": batch_code,
             "batchCodeDisplay": batch_code_display,
             "brandBatchCodes": brand_batch_codes,
+            "encapsulationId": njp_id,
+            "encapsulationCode": njp.get("encapsulationCode") or njp.get("njpCode") or "",
             "njpId": njp_id,
             "njpCode": njp.get("njpCode") or "",
             "mixingId": njp.get("mixingId") or "",
@@ -778,12 +715,16 @@ class AssemblyRules:
                 and capsule_weight_mg is not None
                 and abs(float(capsule_weight_mg) - source_capsule_weight_mg) > 0.0001
             ),
-            "filledBottleWeight": cls._as_float_or_none(cls._pick(payload, existing, "filledBottleWeight")),
+            "filledBottleWeight": filled_bottle_weight,
+            "weightUnit": weight_unit,
             "capsulesReceivedQty": int(capsules_received_qty),
+            "totalUnitsUsed": int(total_units_used),
             "capsulesReceivedKg": capsules_received_kg,
             "calculatedCapsulesReceivedKg": calculated_capsules_received_kg,
             "capsulesPerBottle": capsules_per_bottle,
+            "unitsPerBottle": capsules_per_bottle,
             "totalBottlesMade": total_bottles_made,
+            "bottleQuantity": bottle_quantity,
             "looseCapsulesQty": loose_capsules_qty,
             "remainingCapsulesAfterBottlingQty": loose_capsules_qty,
             "bottleLidId": bottle_lid_id,
@@ -841,9 +782,11 @@ class AssemblyRules:
             "finalQuantities": {
                 **final_quantities,
                 "capsulesReceivedQty": int(capsules_received_qty),
+                "totalUnitsUsed": int(total_units_used),
                 "capsulesReceivedKg": capsules_received_kg,
                 "capsulesPerBottle": capsules_per_bottle,
                 "totalBottlesMade": total_bottles_made,
+                "bottleQuantity": bottle_quantity,
                 "looseCapsulesQty": loose_capsules_qty,
                 "remainingCapsulesAfterBottlingQty": loose_capsules_qty,
                 "bottleLidId": bottle_lid_id,
@@ -855,6 +798,8 @@ class AssemblyRules:
             },
             "capsuleData": {
                 **capsule_data,
+                "encapsulationId": njp_id,
+                "encapsulationCode": njp.get("encapsulationCode") or njp.get("njpCode") or "",
                 "njpId": njp_id,
                 "njpCode": njp.get("njpCode") or "",
                 "mixingCode": njp.get("mixingCode") or "",

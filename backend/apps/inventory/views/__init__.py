@@ -16,6 +16,7 @@ from .raw_materials import (
     RawMaterialListCreateView,
     SetStockView,
 )
+from .records import InventoryRecordListView
 
 __all__ = [
     "AdjustStockView",
@@ -24,6 +25,7 @@ __all__ = [
     "FinishedGoodsDetailView",
     "FinishedGoodsListCreateView",
     "InventoryHistoryView",
+    "InventoryRecordListView",
     "LabelDetailView",
     "LabelListCreateView",
     "LabelValidationView",

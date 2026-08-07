@@ -5,6 +5,8 @@ class BrandSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200)
     codePrefix = serializers.CharField(max_length=50)
     shortName = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    contactName = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    contactEmail = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
     addressLine1 = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     addressLine2 = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     city = serializers.CharField(required=False, allow_blank=True, allow_null=True)

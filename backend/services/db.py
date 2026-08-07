@@ -220,6 +220,30 @@ def get_inventory_quantity(
     return sum((as_decimal(row.get("quantity")) for row in data(execute(query))), Decimal("0"))
 
 
+def get_inventory_quantity_as_of(
+    *,
+    inventory_item_id: str,
+    inventory_lot_id: str | None,
+    as_of: datetime,
+) -> Decimal:
+    """Balance for a single lot at a point in time, reconstructed from the
+    inventory_movements ledger rather than the live inventory_balances table.
+    """
+    query = (
+        client()
+        .table("inventory_movements")
+        .select("quantity_after")
+        .eq("inventory_item_id", inventory_item_id)
+        .lt("created_at", as_of.isoformat())
+        .order("created_at", desc=True)
+        .limit(1)
+    )
+    if inventory_lot_id:
+        query = query.eq("inventory_lot_id", inventory_lot_id)
+    row = one(execute(query))
+    return as_decimal(row["quantity_after"]) if row else Decimal("0")
+
+
 def inventory_balance_rows(
     *,
     inventory_item_id: str,

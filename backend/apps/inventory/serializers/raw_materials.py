@@ -12,8 +12,9 @@ class RawMaterialSerializer(serializers.Serializer):
     location = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     pricePerKg = serializers.DecimalField(max_digits=12, decimal_places=4, min_value=0)
     code = serializers.CharField(required=False, allow_blank=True)
-    coaLink = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    coaLink = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     comments = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    potency = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def validate(self, attrs):
         if not self.partial and "qty" not in attrs and "qtyKg" not in attrs:
@@ -25,3 +26,5 @@ class RawMaterialCategorySerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     isActive = serializers.BooleanField(required=False, default=True)
+    isNmiCategory = serializers.BooleanField(required=False, default=False)
+    metadata = serializers.DictField(required=False, default=dict)

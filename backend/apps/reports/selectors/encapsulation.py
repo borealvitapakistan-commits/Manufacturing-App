@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from apps.manufacturing.services import NJPService
+from apps.manufacturing.services import EncapsulationService
 
 from .utils import filter_by_date_range
 
 
-def list_njp_reports(
+def list_encapsulation_reports(
     *,
     brand_id: str | None = None,
     product_id: str | None = None,
@@ -18,7 +18,7 @@ def list_njp_reports(
     to_date: date | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    rows = NJPService.list(
+    rows = EncapsulationService.list(
         brand_id=brand_id,
         product_id=product_id,
         mixing_id=mixing_id,
@@ -33,5 +33,16 @@ def list_njp_reports(
     )
 
 
-def get_njp_report(item_id: str) -> dict[str, Any]:
-    return NJPService.get(item_id)
+def get_encapsulation_report(item_id: str) -> dict[str, Any]:
+    return EncapsulationService.get(item_id)
+
+
+list_njp_reports = list_encapsulation_reports
+get_njp_report = get_encapsulation_report
+
+__all__ = [
+    "get_encapsulation_report",
+    "get_njp_report",
+    "list_encapsulation_reports",
+    "list_njp_reports",
+]

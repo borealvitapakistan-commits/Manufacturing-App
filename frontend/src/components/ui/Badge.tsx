@@ -42,8 +42,8 @@ interface StatusBadgeProps {
 export function StatusBadge({ status, onClick, className }: StatusBadgeProps) {
   const statusConfig: Record<string, { label: string; variant: BadgeProps['variant'] }> = {
     mixingPending: { label: 'Send to Mixing', variant: 'success' },
-    ngpPending: { label: 'Mixing Complete → NJP', variant: 'warning' },
-    assemblyPending: { label: 'NJP Complete → Assembly', variant: 'warning' },
+    ngpPending: { label: 'Mixing Complete -> Encapsulation', variant: 'warning' },
+    assemblyPending: { label: 'Encapsulation Complete -> Assembly', variant: 'warning' },
     finalized: { label: 'Finalized', variant: 'success' }
   }
 

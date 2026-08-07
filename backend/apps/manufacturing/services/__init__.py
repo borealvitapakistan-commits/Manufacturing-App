@@ -1,5 +1,10 @@
-﻿from .assembly import AssemblyService
+from .assembly import AssemblyService
+from .encapsulation import EncapsulationService, NJPService
 from .mixing import MixingService
-from .njp import NJPService
 
-__all__ = ["AssemblyService", "MixingService", "NJPService"]
+__all__ = [
+    "AssemblyService",
+    "MixingService",
+    "EncapsulationService",
+    "NJPService",
+]

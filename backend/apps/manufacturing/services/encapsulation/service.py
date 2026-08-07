@@ -10,9 +10,16 @@ from apps.manufacturing.services.mixing import MixingService
 from services import db
 from services.base_service import ServiceError
 from services.converters import to_json_value
-from .rules import NJPRules
+from .rules import EncapsulationRules
 
-class NJPService(NJPRules):
+
+class EncapsulationService(EncapsulationRules):
+    TABLE = "encapsulations"
+    SESSIONS_TABLE = "encapsulation_sessions"
+    LOAD_CHECKS_TABLE = "encapsulation_load_checks"
+    FK_COLUMN = "encapsulation_id"
+    CODE_COLUMN = "encapsulation_code"
+
     @classmethod
     def _normalize_session_date(cls, value: Any) -> str | None:
         """Convert supported session date values to ``YYYY-MM-DD``.
@@ -68,7 +75,7 @@ class NJPService(NJPRules):
                 return parsed_datetime.date().isoformat()
             except (OSError, OverflowError, ValueError) as exc:
                 raise ServiceError(
-                    f"Invalid NJP session date: {value!r}.",
+                    f"Invalid Encapsulation session date: {value!r}.",
                     400,
                 ) from exc
 
@@ -93,7 +100,7 @@ class NJPService(NJPRules):
 
         raise ServiceError(
             (
-                f"Invalid NJP session date: {value!r}. "
+                f"Invalid Encapsulation session date: {value!r}. "
                 "Use YYYY-MM-DD, an ISO datetime, or a Unix timestamp."
             ),
             400,
@@ -106,7 +113,7 @@ class NJPService(NJPRules):
         except ServiceError as error:
             if error.status_code == 404:
                 raise ServiceError(
-                    "Selected mixing was not found. Save the mixing first, then create NJP from it.",
+                    "Selected mixing was not found. Save the mixing first, then create Encapsulation from it.",
                     404,
                 )
             raise
@@ -116,12 +123,107 @@ class NJPService(NJPRules):
         return db.one(
             db.execute(
                 db.client()
-                .table("njp_runs")
+                .table(cls.TABLE)
                 .select("*")
                 .eq("id", item_id)
                 .limit(1)
             )
         )
+
+    @classmethod
+    def _session_rows(cls, item_id: str) -> list[dict[str, Any]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table(cls.SESSIONS_TABLE)
+                .select("*")
+                .eq(cls.FK_COLUMN, item_id)
+                .order("sort_order")
+            )
+        )
+        sessions: list[dict[str, Any]] = []
+        for row in rows:
+            sessions.append(
+                to_json_value(
+                    {
+                        "date": row.get("session_date"),
+                        "startDate": row.get("session_date"),
+                        "startTime": row.get("start_time") or "",
+                        "endDate": row.get("session_date"),
+                        "endTime": row.get("end_time") or "",
+                        "remarks": row.get("remarks") or "",
+                    }
+                )
+            )
+        return sessions
+
+    @classmethod
+    def _load_check_rows(cls, item_id: str) -> list[dict[str, Any]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table(cls.LOAD_CHECKS_TABLE)
+                .select("*")
+                .eq(cls.FK_COLUMN, item_id)
+                .order("created_at")
+            )
+        )
+        checks: list[dict[str, Any]] = []
+        for row in rows:
+            metadata = dict(row.get("metadata") or {})
+            avg_mg = db.as_float(row.get("avg_mg") or row.get("average_weight_mg"))
+            checks.append(
+                to_json_value(
+                    {
+                        **metadata,
+                        "checkDate": row.get("check_date"),
+                        "date": row.get("check_date"),
+                        "checkTime": row.get("check_time"),
+                        "time": row.get("check_time"),
+                        "loadLabel": row.get("load_label") or metadata.get("loadLabel"),
+                        "load": row.get("load_label") or metadata.get("load"),
+                        "w1Mg": db.as_float(row.get("w1_mg")),
+                        "w2Mg": db.as_float(row.get("w2_mg")),
+                        "w3Mg": db.as_float(row.get("w3_mg")),
+                        "w4Mg": db.as_float(row.get("w4_mg")),
+                        "w5Mg": db.as_float(row.get("w5_mg")),
+                        "avgMg": avg_mg,
+                        "avgWeightMg": avg_mg,
+                        "averageWeightMg": avg_mg,
+                        "sampleCount": row.get("sample_count"),
+                        "operatorName": row.get("operator_name") or "",
+                        "remarks": row.get("remarks") or "",
+                    }
+                )
+        )
+        return checks
+
+    @classmethod
+    def _product_code_products(cls) -> list[dict[str, Any]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("products")
+                .select("id, product_name, product_code, npn")
+                .limit(5000)
+            )
+        )
+        products: list[dict[str, Any]] = []
+        for row in rows:
+            product_name = row.get("product_name") or row.get("product_code") or row.get("npn") or ""
+            products.append(
+                {
+                    "id": str(row.get("id") or ""),
+                    "name": product_name,
+                    "productName": product_name,
+                    "product_name": row.get("product_name") or "",
+                    "productCode": row.get("product_code") or "",
+                    "product_code": row.get("product_code") or "",
+                    "code": row.get("product_code") or row.get("npn") or "",
+                    "npn": row.get("npn") or "",
+                }
+            )
+        return products
 
     @classmethod
     def _db_to_app(cls, row: dict[str, Any]) -> dict[str, Any]:
@@ -137,10 +239,29 @@ class NJPService(NJPRules):
                     else None
                 ),
             )
+        code = (
+            row.get(cls.CODE_COLUMN)
+            or snapshot.get("encapsulationCode")
+            or snapshot.get("njpCode")
+            or ""
+        )
+        sessions = (
+            snapshot.get("encapsulationSessions")
+            or snapshot.get("njpSessions")
+            or snapshot.get("timeLogs")
+            or cls._session_rows(item_id)
+        )
+        load_checks = (
+            snapshot.get("encapsulationLoadChecks")
+            or snapshot.get("loadChecks")
+            or snapshot.get("njpLoadChecks")
+            or cls._load_check_rows(item_id)
+        )
         snapshot.update(
             {
                 "id": item_id,
-                "njpCode": row.get("njp_code"),
+                "encapsulationCode": code,
+                "njpCode": code,
                 "mixingId": str(row["mixing_id"]) if row.get("mixing_id") else "",
                 "mixingCode": snapshot.get("mixingCode") or "",
                 "capsuleSize": row.get("capsule_size"),
@@ -158,6 +279,20 @@ class NJPService(NJPRules):
                 "netCapsulesFilledQty": int(db.as_decimal(row.get("net_capsules_qty"))),
                 "availableCapsulesQty": int(available),
                 "remainingCapsulesQty": int(available),
+                "mixingAvailableBeforeEncapsulationKg": snapshot.get("mixingAvailableBeforeEncapsulationKg")
+                or snapshot.get("mixingAvailableBeforeNJPkg"),
+                "mixingUsedInEncapsulationKg": snapshot.get("mixingUsedInEncapsulationKg")
+                or snapshot.get("mixingUsedInNJPkg")
+                or db.as_float(row.get("available_mixing_used_kg")),
+                "mixingAvailableAfterEncapsulationKg": snapshot.get("mixingAvailableAfterEncapsulationKg")
+                or snapshot.get("mixingAvailableAfterNJPkg"),
+                "mixingAvailableBeforeNJPkg": snapshot.get("mixingAvailableBeforeNJPkg")
+                or snapshot.get("mixingAvailableBeforeEncapsulationKg"),
+                "mixingUsedInNJPkg": snapshot.get("mixingUsedInNJPkg")
+                or snapshot.get("mixingUsedInEncapsulationKg")
+                or db.as_float(row.get("available_mixing_used_kg")),
+                "mixingAvailableAfterNJPkg": snapshot.get("mixingAvailableAfterNJPkg")
+                or snapshot.get("mixingAvailableAfterEncapsulationKg"),
                 "emptyCapsuleUnitWeightMg": db.as_float(row.get("empty_capsule_weight_mg")),
                 "totalCapsulesProducedKg": db.as_float(row.get("total_capsules_produced_kg")),
                 "yieldPercent": db.as_float(row.get("yield_percent")),
@@ -166,11 +301,41 @@ class NJPService(NJPRules):
                     row.get("status") or "",
                 ),
                 "remarks": row.get("remarks") or snapshot.get("remarks") or "",
+                "dusterCheck": (
+                    row.get("duster_check")
+                    if row.get("duster_check") is not None
+                    else bool(snapshot.get("dusterCheck"))
+                ),
+                "vacuumCheck": (
+                    row.get("vacuum_check")
+                    if row.get("vacuum_check") is not None
+                    else bool(snapshot.get("vacuumCheck"))
+                ),
+                "temperatureC": (
+                    db.as_float(row.get("temperature_c"))
+                    if row.get("temperature_c") is not None
+                    else snapshot.get("temperatureC")
+                ),
+                "humidityPercent": (
+                    db.as_float(row.get("humidity_percent"))
+                    if row.get("humidity_percent") is not None
+                    else snapshot.get("humidityPercent")
+                ),
+                "operatorName": row.get("operator_name") or snapshot.get("operatorName") or "",
+                "reason": row.get("reason") or snapshot.get("reason") or "",
                 "outputCapsuleInventoryItemId": (
                     str(row["output_capsule_inventory_item_id"])
                     if row.get("output_capsule_inventory_item_id")
                     else ""
                 ),
+                "encapsulationSessions": sessions,
+                "encapsulationTimeLogs": sessions,
+                "njpSessions": sessions,
+                "njpTimeLogs": sessions,
+                "timeLogs": sessions,
+                "encapsulationLoadChecks": load_checks,
+                "njpLoadChecks": load_checks,
+                "loadChecks": load_checks,
                 "outputCapsuleLotId": (
                     str(row["output_capsule_lot_id"])
                     if row.get("output_capsule_lot_id")
@@ -195,7 +360,7 @@ class NJPService(NJPRules):
         rows = db.data(
             db.execute(
                 db.client()
-                .table("njp_runs")
+                .table(cls.TABLE)
                 .select("*")
                 .order("created_at", desc=True)
                 .limit(max(1, min(int(limit or 500), 2000)))
@@ -217,6 +382,7 @@ class NJPService(NJPRules):
                 in " ".join(
                     [
                         str(record.get("njpCode") or ""),
+                        str(record.get("encapsulationCode") or ""),
                         str(record.get("mixingCode") or ""),
                         str(record.get("mixingName") or ""),
                         str(record.get("productName") or ""),
@@ -229,15 +395,32 @@ class NJPService(NJPRules):
 
     @classmethod
     def get(cls, item_id: str) -> dict[str, Any]:
-        return cls._db_to_app(db.require_row(cls._row_by_id(item_id), "NJP record not found"))
+        return cls._db_to_app(
+            db.require_row(cls._row_by_id(item_id), "Encapsulation record not found")
+        )
 
     @classmethod
-    def _insert_children(cls, njp_id: str, record: dict[str, Any]) -> None:
-        db.execute(db.client().table("njp_sessions").delete().eq("njp_id", njp_id))
-        db.execute(db.client().table("njp_load_checks").delete().eq("njp_id", njp_id))
+    def _insert_children(cls, encapsulation_id: str, record: dict[str, Any]) -> None:
+        db.execute(
+            db.client()
+            .table(cls.SESSIONS_TABLE)
+            .delete()
+            .eq(cls.FK_COLUMN, encapsulation_id)
+        )
+        db.execute(
+            db.client()
+            .table(cls.LOAD_CHECKS_TABLE)
+            .delete()
+            .eq(cls.FK_COLUMN, encapsulation_id)
+        )
 
         session_rows = []
-        for index, row in enumerate(record.get("njpSessions") or [], start=1):
+        for index, row in enumerate(
+            record.get("encapsulationSessions")
+            or record.get("njpSessions")
+            or [],
+            start=1,
+        ):
             session_date = cls._normalize_session_date(
                 row.get("date") or row.get("sessionDate")
             )
@@ -245,7 +428,7 @@ class NJPService(NJPRules):
                 continue
             session_rows.append(
                 {
-                    "njp_id": njp_id,
+                    cls.FK_COLUMN: encapsulation_id,
                     "session_date": session_date,
                     "start_time": row.get("startTime") or None,
                     "end_time": row.get("endTime") or None,
@@ -254,29 +437,45 @@ class NJPService(NJPRules):
                 }
             )
         if session_rows:
-            db.execute(db.client().table("njp_sessions").insert(session_rows))
+            db.execute(db.client().table(cls.SESSIONS_TABLE).insert(session_rows))
 
         load_rows = []
-        for row in record.get("loadChecks") or record.get("njpLoadChecks") or []:
+        for row in (
+            record.get("encapsulationLoadChecks")
+            or record.get("loadChecks")
+            or record.get("njpLoadChecks")
+            or []
+        ):
+            average_weight = row.get("avgMg") or row.get("avgWeightMg") or row.get("averageWeightMg")
+            sample_count = row.get("sampleCount") or 5
             load_rows.append(
                 {
-                    "njp_id": njp_id,
-                    "sample_count": row.get("sampleCount"),
-                    "average_weight_mg": db.decimal_str(row.get("averageWeightMg") or 0),
-                    "min_weight_mg": db.decimal_str(row.get("minWeightMg") or 0),
-                    "max_weight_mg": db.decimal_str(row.get("maxWeightMg") or 0),
+                    cls.FK_COLUMN: encapsulation_id,
+                    "check_date": row.get("checkDate") or row.get("date") or None,
+                    "check_time": row.get("checkTime") or row.get("time") or None,
+                    "load_label": row.get("loadLabel") or row.get("load") or None,
+                    "w1_mg": db.decimal_str(row.get("w1Mg")),
+                    "w2_mg": db.decimal_str(row.get("w2Mg")),
+                    "w3_mg": db.decimal_str(row.get("w3Mg")),
+                    "w4_mg": db.decimal_str(row.get("w4Mg")),
+                    "w5_mg": db.decimal_str(row.get("w5Mg")),
+                    "avg_mg": db.decimal_str(average_weight),
+                    "sample_count": sample_count,
+                    "average_weight_mg": db.decimal_str(average_weight),
+                    "min_weight_mg": db.decimal_str(row.get("minWeightMg")),
+                    "max_weight_mg": db.decimal_str(row.get("maxWeightMg")),
                     "operator_name": row.get("operatorName"),
                     "remarks": row.get("remarks"),
                     "metadata": to_json_value(row),
                 }
             )
         if load_rows:
-            db.execute(db.client().table("njp_load_checks").insert(load_rows))
+            db.execute(db.client().table(cls.LOAD_CHECKS_TABLE).insert(load_rows))
 
     @staticmethod
     def _status_db(record: dict[str, Any]) -> str:
         value = str(record.get("status") or "").strip().lower()
-        if value in {"completed", "njp completed"}:
+        if value in {"completed", "njp completed", "encapsulation completed"}:
             return "completed"
         return "underprocess"
 
@@ -298,9 +497,9 @@ class NJPService(NJPRules):
 
     @classmethod
     def _consume_mixing(cls, record: dict[str, Any], *, entity_id: str) -> str | None:
-        mixing_id, used_kg = cls._njp_usage(record)
+        mixing_id, used_kg = cls._encapsulation_usage(record)
         if not mixing_id or used_kg <= 0:
-            raise ServiceError("Enter how many KG of available mixing will be used for NJP.", 400)
+            raise ServiceError("Enter how many KG of available mixing will be used for Encapsulation.", 400)
         source = cls._mixing_row(str(mixing_id))
         item_id = source.get("output_inventory_item_id")
         if not item_id:
@@ -308,16 +507,24 @@ class NJPService(NJPRules):
         db.consume_inventory_quantity(
             inventory_item_id=str(item_id),
             quantity=used_kg,
-            related_entity_type="njp",
+            related_entity_type="encapsulation",
             related_entity_id=entity_id,
-            reason=f"Mixing powder used in {record.get('njpCode') or 'NJP'}",
-            metadata={"mixingId": mixing_id, "mixingCode": record.get("mixingCode")},
+            reason=(
+                f"Mixing powder used in "
+                f"{record.get('encapsulationCode') or record.get('njpCode') or 'Encapsulation'}"
+            ),
+            metadata={
+                "mixingId": mixing_id,
+                "mixingCode": record.get("mixingCode"),
+                "encapsulationCode": record.get("encapsulationCode") or record.get("njpCode"),
+                "njpCode": record.get("njpCode") or record.get("encapsulationCode"),
+            },
         )
         return str(source.get("output_inventory_lot_id") or "") or None
 
     @classmethod
     def _restore_mixing(cls, record: dict[str, Any], *, entity_id: str) -> None:
-        mixing_id, used_kg = cls._njp_usage(record)
+        mixing_id, used_kg = cls._encapsulation_usage(record)
         if not mixing_id or used_kg <= 0:
             return
         source = cls._mixing_row(str(mixing_id))
@@ -332,38 +539,55 @@ class NJPService(NJPRules):
             ),
             quantity_delta=used_kg,
             movement_type="adjust",
-            related_entity_type="njp",
+            related_entity_type="encapsulation",
             related_entity_id=entity_id,
-            reason="NJP edit/delete restored mixing powder",
-            metadata={"mixingId": mixing_id, "njpCode": record.get("njpCode")},
+            reason="Encapsulation edit/delete restored mixing powder",
+            metadata={
+                "mixingId": mixing_id,
+                "encapsulationCode": record.get("encapsulationCode") or record.get("njpCode"),
+                "njpCode": record.get("njpCode") or record.get("encapsulationCode"),
+            },
         )
 
     @classmethod
     def _produce_capsules(cls, row: dict[str, Any], record: dict[str, Any]) -> tuple[str, str | None]:
         item_id = row.get("output_capsule_inventory_item_id")
         lot_id = row.get("output_capsule_lot_id")
-        njp_id = str(row["id"])
+        encapsulation_id = str(row["id"])
         location_id = row.get("location_id")
-        njp_code = record.get("njpCode") or row.get("njp_code") or njp_id
+        encapsulation_code = (
+            record.get("encapsulationCode")
+            or record.get("njpCode")
+            or row.get(cls.CODE_COLUMN)
+            or encapsulation_id
+        )
         product_name = record.get("productName") or record.get("mixingName") or "Capsules"
 
         if not item_id:
             item = db.create_inventory_item(
                 item_kind="capsule_bulk",
-                item_code=str(njp_code),
+                item_code=str(encapsulation_code),
                 item_name=f"{product_name} capsules",
                 unit_of_measure="each",
-                metadata={"njpId": njp_id, "njpCode": njp_code},
+                metadata={
+                    "encapsulationId": encapsulation_id,
+                    "encapsulationCode": encapsulation_code,
+                    "njpId": encapsulation_id,
+                    "njpCode": encapsulation_code,
+                },
             )
             item_id = str(item["id"])
         if not lot_id:
             lot = db.create_lot(
                 inventory_item_id=str(item_id),
-                lot_code=str(njp_code),
+                lot_code=str(encapsulation_code),
                 location_id=str(location_id) if location_id else None,
-                source_document_type="njp",
-                source_document_id=njp_id,
-                metadata={"njpCode": njp_code},
+                source_document_type="encapsulation",
+                source_document_id=encapsulation_id,
+                metadata={
+                    "encapsulationCode": encapsulation_code,
+                    "njpCode": encapsulation_code,
+                },
             )
             lot_id = str(lot["id"]) if lot else None
 
@@ -373,10 +597,13 @@ class NJPService(NJPRules):
             location_id=str(location_id) if location_id else None,
             quantity_delta=db.as_decimal(record.get("netCapsulesFilledQty") or record.get("totalCapsulesFilledQty")),
             movement_type="produce",
-            related_entity_type="njp",
-            related_entity_id=njp_id,
-            reason="NJP produced bulk capsules",
-            metadata={"njpCode": njp_code},
+            related_entity_type="encapsulation",
+            related_entity_id=encapsulation_id,
+            reason="Encapsulation produced bulk capsules",
+            metadata={
+                "encapsulationCode": encapsulation_code,
+                "njpCode": encapsulation_code,
+            },
         )
         return str(item_id), str(lot_id) if lot_id else None
 
@@ -390,7 +617,7 @@ class NJPService(NJPRules):
         available = db.get_inventory_quantity(inventory_item_id=item_id, inventory_lot_id=lot_id)
         if qty > available:
             raise ServiceError(
-                "Cannot edit or delete this NJP because Assembly has already consumed capsules from it.",
+                "Cannot edit or delete this Encapsulation because Assembly has already consumed capsules from it.",
                 409,
             )
         db.inventory_movement(
@@ -399,10 +626,13 @@ class NJPService(NJPRules):
             location_id=str(row["location_id"]) if row.get("location_id") else None,
             quantity_delta=-qty,
             movement_type="adjust",
-            related_entity_type="njp",
+            related_entity_type="encapsulation",
             related_entity_id=str(row["id"]),
-            reason="NJP edit/delete reversed capsule output",
-            metadata={"njpCode": record.get("njpCode")},
+            reason="Encapsulation edit/delete reversed capsule output",
+            metadata={
+                "encapsulationCode": record.get("encapsulationCode") or record.get("njpCode"),
+                "njpCode": record.get("njpCode") or record.get("encapsulationCode"),
+            },
         )
 
     @classmethod
@@ -414,10 +644,14 @@ class NJPService(NJPRules):
             db.one(
                 db.execute(
                     db.client()
-                    .table("njp_runs")
+                    .table(cls.TABLE)
                     .insert(
                         {
-                            "njp_code": cleaned.get("njpCode") or None,
+                            cls.CODE_COLUMN: (
+                                cleaned.get("encapsulationCode")
+                                or cleaned.get("njpCode")
+                                or None
+                            ),
                             "mixing_id": cleaned.get("mixingId"),
                             "capsule_size": cleaned.get("capsuleSize") or "00",
                             "location_id": location_id,
@@ -449,17 +683,37 @@ class NJPService(NJPRules):
                             "yield_percent": db.decimal_str(cleaned.get("yieldPercent") or 0, "0.0001"),
                             "status": cls._status_db(cleaned),
                             "remarks": cleaned.get("remarks"),
+                            "duster_check": bool(cleaned.get("dusterCheck")),
+                            "vacuum_check": bool(cleaned.get("vacuumCheck")),
+                            "temperature_c": (
+                                db.decimal_str(cleaned.get("temperatureC"))
+                                if cleaned.get("temperatureC") not in (None, "")
+                                else None
+                            ),
+                            "humidity_percent": (
+                                db.decimal_str(cleaned.get("humidityPercent"))
+                                if cleaned.get("humidityPercent") not in (None, "")
+                                else None
+                            ),
+                            "operator_name": cleaned.get("operatorName") or None,
+                            "reason": cleaned.get("reason") or None,
                             "record_snapshot": to_json_value(cleaned),
                         }
                     )
                 )
             ),
-            "NJP was not saved",
+            "Encapsulation was not saved",
             500,
         )
-        njp_id = str(created["id"])
-        record = {**cleaned, "id": njp_id, "njpCode": created.get("njp_code")}
-        input_lot_id = cls._consume_mixing(record, entity_id=njp_id)
+        encapsulation_id = str(created["id"])
+        generated_code = created.get(cls.CODE_COLUMN)
+        record = {
+            **cleaned,
+            "id": encapsulation_id,
+            "encapsulationCode": generated_code,
+            "njpCode": generated_code,
+        }
+        input_lot_id = cls._consume_mixing(record, entity_id=encapsulation_id)
         item_id, lot_id = cls._produce_capsules(created, record)
         record.update(
             {
@@ -471,7 +725,7 @@ class NJPService(NJPRules):
         )
         db.execute(
             db.client()
-            .table("njp_runs")
+            .table(cls.TABLE)
             .update(
                 {
                     "input_mixed_powder_lot_id": input_lot_id,
@@ -480,21 +734,26 @@ class NJPService(NJPRules):
                     "record_snapshot": to_json_value(record),
                 }
             )
-            .eq("id", njp_id)
+            .eq("id", encapsulation_id)
         )
-        cls._insert_children(njp_id, record)
-        return cls.get(njp_id)
+        cls._insert_children(encapsulation_id, record)
+        return cls.get(encapsulation_id)
 
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        row = db.require_row(cls._row_by_id(item_id), "NJP record not found")
+        row = db.require_row(cls._row_by_id(item_id), "Encapsulation record not found")
         previous = cls._db_to_app(row)
         cls._reverse_output(row, previous)
         cls._restore_mixing(previous, entity_id=item_id)
         records = cls.list(limit=2000)
         cleaned = cls._clean_payload(payload, existing=previous, records=records)
         location_id = db.ensure_location(cleaned.get("location"))
-        record = {**cleaned, "id": item_id}
+        record = {
+            **cleaned,
+            "id": item_id,
+            "encapsulationCode": cleaned.get("encapsulationCode") or cleaned.get("njpCode"),
+            "njpCode": cleaned.get("njpCode") or cleaned.get("encapsulationCode"),
+        }
         input_lot_id = cls._consume_mixing(record, entity_id=item_id)
         item_id_out, lot_id = cls._produce_capsules(row, record)
         record.update(
@@ -507,10 +766,13 @@ class NJPService(NJPRules):
         )
         db.execute(
             db.client()
-            .table("njp_runs")
+            .table(cls.TABLE)
             .update(
                 {
-                    "njp_code": record.get("njpCode"),
+                    cls.CODE_COLUMN: (
+                        record.get("encapsulationCode")
+                        or record.get("njpCode")
+                    ),
                     "mixing_id": record.get("mixingId"),
                     "input_mixed_powder_lot_id": input_lot_id,
                     "output_capsule_inventory_item_id": item_id_out,
@@ -540,6 +802,20 @@ class NJPService(NJPRules):
                     "yield_percent": db.decimal_str(record.get("yieldPercent") or 0, "0.0001"),
                     "status": cls._status_db(record),
                     "remarks": record.get("remarks"),
+                    "duster_check": bool(record.get("dusterCheck")),
+                    "vacuum_check": bool(record.get("vacuumCheck")),
+                    "temperature_c": (
+                        db.decimal_str(record.get("temperatureC"))
+                        if record.get("temperatureC") not in (None, "")
+                        else None
+                    ),
+                    "humidity_percent": (
+                        db.decimal_str(record.get("humidityPercent"))
+                        if record.get("humidityPercent") not in (None, "")
+                        else None
+                    ),
+                    "operator_name": record.get("operatorName") or None,
+                    "reason": record.get("reason") or None,
                     "version": int(row.get("version") or 1) + 1,
                     "record_snapshot": to_json_value(record),
                 }
@@ -551,15 +827,23 @@ class NJPService(NJPRules):
 
     @classmethod
     def delete(cls, item_id: str) -> dict[str, Any]:
-        row = db.require_row(cls._row_by_id(item_id), "NJP record not found")
+        row = db.require_row(cls._row_by_id(item_id), "Encapsulation record not found")
         if db.one(
-            db.execute(db.client().table("assemblies").select("id").eq("njp_id", item_id).limit(1))
+            db.execute(
+                db.client()
+                .table("assemblies")
+                .select("id")
+                .eq("encapsulation_id", item_id)
+                .limit(1)
+            )
         ):
-            raise ServiceError("Cannot delete NJP because Assembly records use it.", 409)
+            raise ServiceError("Cannot delete Encapsulation because Assembly records use it.", 409)
         previous = cls._db_to_app(row)
         cls._reverse_output(row, previous)
         cls._restore_mixing(previous, entity_id=item_id)
-        db.execute(db.client().table("njp_runs").delete().eq("id", item_id))
+        db.execute(db.client().table(cls.TABLE).delete().eq("id", item_id))
         return {"success": True}
 
-__all__ = ["NJPService"]
+NJPService = EncapsulationService
+
+__all__ = ["EncapsulationService", "NJPService"]

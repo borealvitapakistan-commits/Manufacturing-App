@@ -2,8 +2,9 @@ from rest_framework import serializers
 
 from apps.manufacturing.serializers.base import MixingSessionSerializer
 
-class NJPSerializer(serializers.Serializer):
-    # Local NJP is created from a saved standalone Mixing record.
+
+class EncapsulationSerializer(serializers.Serializer):
+    # Encapsulation is created from a saved standalone Mixing record.
     mixingId = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     mixingCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     mixingName = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -65,6 +66,7 @@ class NJPSerializer(serializers.Serializer):
         allow_null=True,
     )
 
+    encapsulationCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     njpCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     lotNumber = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
@@ -186,7 +188,14 @@ class NJPSerializer(serializers.Serializer):
     timeLogs = MixingSessionSerializer(many=True, required=False, default=list)
 
     status = serializers.ChoiceField(
-        choices=["Underprocess", "Completed", "In NJP", "NJP Completed"],
+        choices=[
+            "Underprocess",
+            "Completed",
+            "In Encapsulation",
+            "Encapsulation Completed",
+            "In NJP",
+            "NJP Completed",
+        ],
         required=False,
     )
 
@@ -203,4 +212,6 @@ class NJPSerializer(serializers.Serializer):
     operatorName = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     capsuleData = serializers.DictField(required=False)
 
-__all__ = ["NJPSerializer"]
+NJPSerializer = EncapsulationSerializer
+
+__all__ = ["EncapsulationSerializer", "NJPSerializer"]

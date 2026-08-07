@@ -1,4 +1,5 @@
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api').replace(/\/$/, '')
+const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 20000)
 
 export class ApiError extends Error {
   constructor(
@@ -51,22 +52,70 @@ function formatErrorDetails(details: unknown): string {
     .join('; ')
 }
 
+function normalizeEndpoint(endpoint: string): string {
+  const splitIndex = endpoint.search(/[?#]/)
+  const path = splitIndex === -1 ? endpoint : endpoint.slice(0, splitIndex)
+  const suffix = splitIndex === -1 ? '' : endpoint.slice(splitIndex)
+
+  if (!path || path.endsWith('/')) return endpoint
+  return `${path}/${suffix}`
+}
+
 export async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const token = window.localStorage.getItem('supabase_access_token')
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers
+  const controller = options.signal ? null : new AbortController()
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), API_TIMEOUT_MS)
+    : undefined
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${normalizeEndpoint(endpoint)}`, {
+      ...options,
+      signal: options.signal ?? controller?.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers
+      }
+    })
+  } catch (error) {
+    if ((error as { name?: string })?.name === 'AbortError') {
+      throw new ApiError(`Request timed out after ${Math.round(API_TIMEOUT_MS / 1000)} seconds.`, 408)
     }
-  })
+    throw error
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId)
+    }
+  }
 
   const text = await response.text()
-  const body = text ? JSON.parse(text) : {}
+  const contentType = response.headers.get('content-type') ?? ''
+  const isJson = contentType.includes('application/json')
+
+  if (!isJson) {
+    throw new ApiError(
+      response.ok
+        ? `Expected JSON but received ${contentType || 'unknown content type'}.`
+        : `Request failed (${response.status}): expected JSON but received ${contentType || 'unknown content type'}.`,
+      response.status,
+      text.slice(0, 500)
+    )
+  }
+
+  let body: Record<string, unknown> = {}
+  if (text) {
+    try {
+      body = JSON.parse(text) as Record<string, unknown>
+    } catch {
+      throw new ApiError('The backend returned invalid JSON.', response.status, text.slice(0, 500))
+    }
+  }
+
   if (!response.ok) {
     const detailMessage = formatErrorDetails(body.details)
     const message = [body.error || 'Request failed', detailMessage]

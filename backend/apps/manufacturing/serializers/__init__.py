@@ -1,5 +1,6 @@
-﻿from .assembly import AssemblySerializer
+from .assembly import AssemblySerializer
 from .base import MixingSessionSerializer
+from .encapsulation import EncapsulationSerializer, NJPSerializer
 from .mixing import (
     MedicinalIngredientSerializer,
     MixingSerializer,
@@ -7,10 +8,10 @@ from .mixing import (
     StandaloneMixingSerializer,
     UsageItemSerializer,
 )
-from .njp import NJPSerializer
 
 __all__ = [
     "AssemblySerializer",
+    "EncapsulationSerializer",
     "MedicinalIngredientSerializer",
     "MixingSerializer",
     "MixingSessionSerializer",

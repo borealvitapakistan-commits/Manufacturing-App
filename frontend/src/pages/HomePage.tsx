@@ -12,27 +12,15 @@ interface ModuleLink {
 
 const traceabilityModules: ModuleLink[] = [
   {
-    href: '/mixing',
-    title: 'Mixing',
-    description: 'Trace raw material consumption and mixed powder movement.',
+    href: '/start-manufacturing',
+    title: 'Start Manufacturing',
+    description: 'Create mixing, encapsulation, and assembly records from one manufacturing area.',
     type: 'Traceability'
   },
   {
-    href: '/njp',
-    title: 'NJP',
-    description: 'Trace capsule filling after mixing is complete.',
-    type: 'Traceability'
-  },
-  {
-    href: '/assembly',
-    title: 'Assembly',
-    description: 'Trace bottle assembly from completed NJP capsules.',
-    type: 'Traceability'
-  },
-  {
-    href: '/finished-goods',
-    title: 'Finished Goods',
-    description: 'Trace finished inventory after assembly completion.',
+    href: '/inventory-management',
+    title: 'Inventory Management',
+    description: 'Open inventory, records, and finished goods from one inventory area.',
     type: 'Traceability'
   },
   {
@@ -42,27 +30,9 @@ const traceabilityModules: ModuleLink[] = [
     type: 'Traceability'
   },
   {
-    href: '/raw-materials',
-    title: 'Raw Materials',
-    description: 'Manage material stock, categories, vendors and COA references.',
-    type: 'Traceability'
-  },
-  {
     href: '/products',
     title: 'Products',
     description: 'Define product formulas and material requirements.',
-    type: 'Traceability'
-  },
-  {
-    href: '/labels',
-    title: 'Labels',
-    description: 'Track label stock by brand, product, type and dosage.',
-    type: 'Traceability'
-  },
-  {
-    href: '/bottles-lids',
-    title: 'Bottles / Lids',
-    description: 'Track capsule bottles, jars and lid inventory quantities.',
     type: 'Traceability'
   },
   {
@@ -76,16 +46,22 @@ const traceabilityModules: ModuleLink[] = [
     title: 'Brands',
     description: 'Maintain brand codes, identity and active status.',
     type: 'Traceability'
+  },
+  {
+    href: '/vendors',
+    title: 'Vendors',
+    description: 'Manage suppliers, manufacturers, shops and their PO prefixes.',
+    type: 'Traceability'
+  },
+  {
+    href: '/send-items',
+    title: 'Send Items',
+    description: 'Record goods sent to a vendor and deduct them from finished-goods inventory.',
+    type: 'Traceability'
   }
 ]
 
 const underDevelopmentModules: ModuleLink[] = [
-  {
-    href: '/vendors',
-    title: 'Vendors',
-    description: 'Supplier setup remains available for later purchasing workflows.',
-    type: 'Under development'
-  },
   {
     href: '/purchase-orders',
     title: 'Purchase Orders',

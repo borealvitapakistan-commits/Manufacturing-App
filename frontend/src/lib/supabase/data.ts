@@ -188,14 +188,22 @@ export async function deleteBottleLidInventory(id: string) {
   await api.delete(`/bottles-lids/${id}`)
 }
 
+export async function fetchInventoryRecords(recordType: string, limit = 200) {
+  return unwrap(
+    await api.get<Data<AnyRecord[]>>(
+      `/inventory/records/${recordType}/${query({ limit })}`
+    )
+  )
+}
+
 // ============================================================================
 // Standalone / Local Mixing
 // Django routes:
-//   GET    /api/mixing/
-//   POST   /api/mixing/
-//   GET    /api/mixing/<uuid:item_id>/
-//   PUT    /api/mixing/<uuid:item_id>/
-//   DELETE /api/mixing/<uuid:item_id>/
+//   GET    /api/manufacturing/mixing/
+//   POST   /api/manufacturing/mixing/
+//   GET    /api/manufacturing/mixing/<uuid:item_id>/
+//   PUT    /api/manufacturing/mixing/<uuid:item_id>/
+//   DELETE /api/manufacturing/mixing/<uuid:item_id>/
 // ============================================================================
 
 export async function fetchLocalMixings(options?: {
@@ -207,13 +215,13 @@ export async function fetchLocalMixings(options?: {
 }) {
   return unwrap(
     await api.get<Data<AnyRecord[]>>(
-      `/mixing/${query({ ...options, limit: options?.limit ?? 500 })}`
+      `/manufacturing/mixing/${query({ ...options, limit: options?.limit ?? 500 })}`
     )
   )
 }
 
 export async function fetchLocalMixing(id: string) {
-  return unwrap(await api.get<Data<AnyRecord>>(`/mixing/${id}/`))
+  return unwrap(await api.get<Data<AnyRecord>>(`/manufacturing/mixing/${id}/`))
 }
 
 export async function saveLocalMixing(record: AnyRecord) {
@@ -221,28 +229,26 @@ export async function saveLocalMixing(record: AnyRecord) {
 
   return unwrap(
     id
-      ? await api.put<Data<AnyRecord>>(`/mixing/${id}/`, payload)
-      : await api.post<Data<AnyRecord>>('/mixing/', payload)
+      ? await api.put<Data<AnyRecord>>(`/manufacturing/mixing/${id}/`, payload)
+      : await api.post<Data<AnyRecord>>('/manufacturing/mixing/', payload)
   )
 }
 
 export async function deleteLocalMixing(id: string) {
-  return unwrap(await api.delete<Data<AnyRecord>>(`/mixing/${id}/`))
+  return unwrap(await api.delete<Data<AnyRecord>>(`/manufacturing/mixing/${id}/`))
 }
 
 // ============================================================================
-// Standalone / Local NJP
+// Standalone / Encapsulation
 // Django routes:
-//   GET    /api/njp/
-//   POST   /api/njp/
-//   GET    /api/njp/<uuid:item_id>/
-//   PUT    /api/njp/<uuid:item_id>/
-//   DELETE /api/njp/<uuid:item_id>/
-//
-// Finished Goods -> Capsules tab uses fetchLocalNJPs().
+//   GET    /api/manufacturing/encapsulation/
+//   POST   /api/manufacturing/encapsulation/
+//   GET    /api/manufacturing/encapsulation/<uuid:item_id>/
+//   PUT    /api/manufacturing/encapsulation/<uuid:item_id>/
+//   DELETE /api/manufacturing/encapsulation/<uuid:item_id>/
 // ============================================================================
 
-export async function fetchLocalNJPs(options?: {
+export async function fetchLocalEncapsulations(options?: {
   brandId?: string
   productId?: string
   mixingId?: string
@@ -251,55 +257,55 @@ export async function fetchLocalNJPs(options?: {
 }) {
   return unwrap(
     await api.get<Data<AnyRecord[]>>(
-      `/njp/${query({ ...options, limit: options?.limit ?? 500 })}`
+      `/manufacturing/encapsulation/${query({ ...options, limit: options?.limit ?? 500 })}`
     )
   )
 }
 
-export async function fetchLocalNJP(id: string) {
-  return unwrap(await api.get<Data<AnyRecord>>(`/njp/${id}/`))
+export async function fetchLocalEncapsulation(id: string) {
+  return unwrap(await api.get<Data<AnyRecord>>(`/manufacturing/encapsulation/${id}/`))
 }
 
-export async function saveLocalNJP(record: AnyRecord) {
+export async function saveLocalEncapsulation(record: AnyRecord) {
   const { id, createdAt, updatedAt, ...payload } = record
 
   return unwrap(
     id
-      ? await api.put<Data<AnyRecord>>(`/njp/${id}/`, payload)
-      : await api.post<Data<AnyRecord>>('/njp/', payload)
+      ? await api.put<Data<AnyRecord>>(`/manufacturing/encapsulation/${id}/`, payload)
+      : await api.post<Data<AnyRecord>>('/manufacturing/encapsulation/', payload)
   )
 }
 
-export async function deleteLocalNJP(id: string) {
-  return unwrap(await api.delete<Data<AnyRecord>>(`/njp/${id}/`))
+export async function deleteLocalEncapsulation(id: string) {
+  return unwrap(await api.delete<Data<AnyRecord>>(`/manufacturing/encapsulation/${id}/`))
 }
 
 // ============================================================================
 // Standalone / Local Assembly
 // Django routes:
-//   GET    /api/assembly/
-//   POST   /api/assembly/
-//   GET    /api/assembly/<uuid:item_id>/
-//   PUT    /api/assembly/<uuid:item_id>/
-//   DELETE /api/assembly/<uuid:item_id>/
+//   GET    /api/manufacturing/assembly/
+//   POST   /api/manufacturing/assembly/
+//   GET    /api/manufacturing/assembly/<uuid:item_id>/
+//   PUT    /api/manufacturing/assembly/<uuid:item_id>/
+//   DELETE /api/manufacturing/assembly/<uuid:item_id>/
 // ============================================================================
 
 export async function fetchLocalAssemblies(options?: {
   brandId?: string
   productId?: string
-  njpId?: string
+  encapsulationId?: string
   search?: string
   limit?: number
 }) {
   return unwrap(
     await api.get<Data<AnyRecord[]>>(
-      `/assembly/${query({ ...options, limit: options?.limit ?? 500 })}`
+      `/manufacturing/assembly/${query({ ...options, limit: options?.limit ?? 500 })}`
     )
   )
 }
 
 export async function fetchLocalAssembly(id: string) {
-  return unwrap(await api.get<Data<AnyRecord>>(`/assembly/${id}/`))
+  return unwrap(await api.get<Data<AnyRecord>>(`/manufacturing/assembly/${id}/`))
 }
 
 export async function saveLocalAssembly(record: AnyRecord) {
@@ -307,19 +313,20 @@ export async function saveLocalAssembly(record: AnyRecord) {
 
   return unwrap(
     id
-      ? await api.put<Data<AnyRecord>>(`/assembly/${id}/`, payload)
-      : await api.post<Data<AnyRecord>>('/assembly/', payload)
+      ? await api.put<Data<AnyRecord>>(`/manufacturing/assembly/${id}/`, payload)
+      : await api.post<Data<AnyRecord>>('/manufacturing/assembly/', payload)
   )
 }
 
 export async function deleteLocalAssembly(id: string) {
-  return unwrap(await api.delete<Data<AnyRecord>>(`/assembly/${id}/`))
+  return unwrap(await api.delete<Data<AnyRecord>>(`/manufacturing/assembly/${id}/`))
 }
 
 export async function fetchFinishedGoods(options?: {
   category?: FGCategory
   brandId?: string
   productId?: string
+  month?: string
   limit?: number
 }) {
   return unwrap(
@@ -379,6 +386,49 @@ export async function saveVendor(vendor: AnyRecord) {
 
 export async function deleteVendor(id: string) {
   await api.delete(`/vendors/${id}`)
+}
+
+// ============================================================================
+// Send Items (goods sent out to a vendor)
+// ============================================================================
+
+export async function fetchSentItemSources(options: {
+  itemType: string
+  brandId?: string
+}) {
+  return unwrap(
+    await api.get<Data<AnyRecord[]>>(
+      `/sent-items/sources/${query({ itemType: options.itemType, brandId: options.brandId })}`
+    )
+  )
+}
+
+export async function fetchSentItems(options?: {
+  vendorId?: string
+  brandId?: string
+  itemType?: string
+  search?: string
+  limit?: number
+}) {
+  return unwrap(
+    await api.get<Data<AnyRecord[]>>(
+      `/sent-items/${query({ ...options, limit: options?.limit ?? 500 })}`
+    )
+  )
+}
+
+export async function saveSentItem(record: AnyRecord) {
+  const { id, createdAt, updatedAt, ...payload } = record
+
+  return unwrap(
+    id
+      ? await api.put<Data<AnyRecord>>(`/sent-items/${id}/`, payload)
+      : await api.post<Data<AnyRecord>>('/sent-items/', payload)
+  )
+}
+
+export async function deleteSentItem(id: string) {
+  return unwrap(await api.delete<Data<AnyRecord>>(`/sent-items/${id}/`))
 }
 
 export async function fetchPurchaseOrders(options?: {
