@@ -82,3 +82,39 @@ npm run build
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module and endpoint
 mapping and [docs/BACKEND_PARITY_AUDIT.md](docs/BACKEND_PARITY_AUDIT.md) for
 the entity, relationship and formula audit.
+
+## Deploy to Vercel
+
+`vercel.json` (repo root) builds the frontend as a static site and the
+Django backend as a single Python serverless function
+(`backend/api/index.py`, a WSGI wrapper around `config/wsgi.py`), routed as:
+
+- `/api/*` -> the Django API
+- everything else -> the built frontend (`frontend/dist`), with an SPA
+  fallback to `index.html` for client-side routes
+
+Since both are served from the same Vercel deployment/domain, the frontend
+talks to the API same-origin (`frontend/.env.production` sets
+`VITE_API_URL=/api`) - no CORS involved in normal use.
+
+Set these in the Vercel project's Environment Variables (Production, and
+Preview if you want preview deployments to work too):
+
+| Variable | Notes |
+|---|---|
+| `SUPABASE_URL` | same value as local `.env` |
+| `SUPABASE_SERVICE_ROLE_KEY` | required in production - the anon-key fallback only applies when `DJANGO_DEBUG=true` |
+| `DJANGO_SECRET_KEY` | any long random string; startup fails without it once `DJANGO_DEBUG=false` |
+| `DJANGO_DEBUG` | set to `false` |
+
+`DJANGO_ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS` don't need to be set
+manually - `config/settings.py` automatically trusts Vercel's own
+`VERCEL_URL` (injected on every deployment). Only add them if you attach a
+custom domain.
+
+Note: this runs Django as a serverless function (cold starts, a
+request-timeout ceiling, no persistent connections/websockets). That's a
+reasonable fit here since the backend already has no local database
+(`DATABASES = {}` - all data access goes through the Supabase REST client
+per request), but for continuous production use a normal always-on host
+(Render/Railway/Fly.io) is worth considering instead of this route.

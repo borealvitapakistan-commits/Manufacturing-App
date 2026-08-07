@@ -20,6 +20,11 @@ def env_list(name: str, default: str = "") -> list[str]:
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "development-only-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", True)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver")
+# Vercel injects VERCEL_URL with the deployment's own hostname (preview and
+# production alike) - trust it automatically so ALLOWED_HOSTS doesn't need
+# to be hand-maintained per deployment.
+if os.getenv("VERCEL_URL"):
+    ALLOWED_HOSTS.append(os.environ["VERCEL_URL"])
 if not DEBUG and SECRET_KEY == "development-only-change-me":
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG=false.")
 
@@ -75,6 +80,11 @@ CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173",
 )
+# Same reasoning as ALLOWED_HOSTS above: on Vercel the frontend and this API
+# are served from the same deployment/domain, so this is normally same-origin
+# and CORS doesn't even apply - this is just a safety net for preview URLs.
+if os.getenv("VERCEL_URL"):
+    CORS_ALLOWED_ORIGINS.append(f"https://{os.environ['VERCEL_URL']}")
 CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", "")
 if DEBUG and not CORS_ALLOWED_ORIGIN_REGEXES:
     CORS_ALLOWED_ORIGIN_REGEXES = [
