@@ -20,11 +20,17 @@ def env_list(name: str, default: str = "") -> list[str]:
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "development-only-change-me")
 DEBUG = env_bool("DJANGO_DEBUG", True)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver")
-# Vercel injects VERCEL_URL with the deployment's own hostname (preview and
-# production alike) - trust it automatically so ALLOWED_HOSTS doesn't need
-# to be hand-maintained per deployment.
-if os.getenv("VERCEL_URL"):
-    ALLOWED_HOSTS.append(os.environ["VERCEL_URL"])
+# Running on Vercel (VERCEL is set to "1" in every build and function
+# invocation there): trust any *.vercel.app host automatically, since the
+# domain actually receiving traffic (the stable production alias, e.g.
+# manufacturing-app-nu.vercel.app) doesn't necessarily match VERCEL_URL
+# (that env var is the current deployment's own build-specific hostname,
+# which can differ from the alias). The leading "." is Django's documented
+# subdomain-wildcard syntax for ALLOWED_HOSTS.
+if os.getenv("VERCEL"):
+    ALLOWED_HOSTS.append(".vercel.app")
+    if os.getenv("VERCEL_URL"):
+        ALLOWED_HOSTS.append(os.environ["VERCEL_URL"])
 if not DEBUG and SECRET_KEY == "development-only-change-me":
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG=false.")
 
@@ -82,10 +88,14 @@ CORS_ALLOWED_ORIGINS = env_list(
 )
 # Same reasoning as ALLOWED_HOSTS above: on Vercel the frontend and this API
 # are served from the same deployment/domain, so this is normally same-origin
-# and CORS doesn't even apply - this is just a safety net for preview URLs.
-if os.getenv("VERCEL_URL"):
-    CORS_ALLOWED_ORIGINS.append(f"https://{os.environ['VERCEL_URL']}")
+# and CORS doesn't even apply - this is just a safety net for preview URLs,
+# where the page and the API can end up on different generated *.vercel.app
+# hostnames.
 CORS_ALLOWED_ORIGIN_REGEXES = env_list("CORS_ALLOWED_ORIGIN_REGEXES", "")
+if os.getenv("VERCEL"):
+    CORS_ALLOWED_ORIGIN_REGEXES.append(r"^https://[a-zA-Z0-9-]+\.vercel\.app$")
+    if os.getenv("VERCEL_URL"):
+        CORS_ALLOWED_ORIGINS.append(f"https://{os.environ['VERCEL_URL']}")
 if DEBUG and not CORS_ALLOWED_ORIGIN_REGEXES:
     CORS_ALLOWED_ORIGIN_REGEXES = [
         r"^http://localhost:517[0-9]$",
