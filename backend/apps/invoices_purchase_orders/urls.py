@@ -1,6 +1,8 @@
 from django.urls import path
 
 from .views import (
+    PODocumentDetailView,
+    PODocumentListCreateView,
     SentItemDetailView,
     SentItemListCreateView,
     SentItemSourcesView,
@@ -14,4 +16,6 @@ urlpatterns = [
     path("sent-items/", SentItemListCreateView.as_view(), name="sent-item-list-create"),
     path("sent-items/sources/", SentItemSourcesView.as_view(), name="sent-item-sources"),
     path("sent-items/<uuid:item_id>/", SentItemDetailView.as_view(), name="sent-item-detail"),
+    path("po-documents/", PODocumentListCreateView.as_view(), name="po-document-list-create"),
+    path("po-documents/<uuid:item_id>/", PODocumentDetailView.as_view(), name="po-document-detail"),
 ]

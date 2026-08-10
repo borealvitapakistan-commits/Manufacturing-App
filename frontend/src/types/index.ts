@@ -486,6 +486,11 @@ export interface PODocument {
   poDate: string
   termsConditions: string | null
   status: PODocumentStatus
+  subtotal: number
+  gstPercent: number
+  othersPercent: number
+  shippingPercent: number
+  grandTotal: number
   items: PODocumentItem[]
   createdAt: number
   updatedAt: number
@@ -504,6 +509,9 @@ export interface CreatePODocumentInput {
   poDate?: string
   termsConditions?: string | null
   status?: PODocumentStatus
+  gstPercent?: number
+  othersPercent?: number
+  shippingPercent?: number
   items?: Array<{
     id?: string
     sr: number

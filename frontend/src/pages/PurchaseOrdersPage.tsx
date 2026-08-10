@@ -16,6 +16,7 @@ import {
   Card,
   ConfirmDialog,
   Input,
+  Select,
   Table,
   TableBody,
   TableCell,
@@ -79,6 +80,7 @@ export default function PurchaseOrdersPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [vendorFilter, setVendorFilter] = useState('')
   const [editingDoc, setEditingDoc] = useState<PODocument | null | 'new'>(null)
   const [deleteTarget, setDeleteTarget] = useState<PODocument | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -111,7 +113,7 @@ export default function PurchaseOrdersPage() {
       setLabels(labelList as LabelInventory[])
     } catch (err) {
       console.error('Failed to load PO documents:', err)
-      setError('Failed to load data. Run migration 011_po_documents.sql if not already applied.')
+      setError('Failed to load purchase orders.')
     } finally {
       setLoading(false)
     }
@@ -339,10 +341,50 @@ export default function PurchaseOrdersPage() {
       pdf.text(textLines(data.termsConditions, contentWidth - 180), margin, y + 16)
     }
 
+    addPageIfNeeded(120)
+    let summaryY = y + 20
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(9)
+    setText('#4b5563')
+    pdf.text(`Subtotal   $${data.subtotal.toFixed(2)}`, pageWidth - margin, summaryY, { align: 'right' })
+
+    if (data.gstPercent) {
+      summaryY += 14
+      pdf.text(
+        `GST (${data.gstPercent}%)   $${((data.subtotal * data.gstPercent) / 100).toFixed(2)}`,
+        pageWidth - margin,
+        summaryY,
+        { align: 'right' }
+      )
+    }
+    if (data.othersPercent) {
+      summaryY += 14
+      pdf.text(
+        `Others (${data.othersPercent}%)   $${((data.subtotal * data.othersPercent) / 100).toFixed(2)}`,
+        pageWidth - margin,
+        summaryY,
+        { align: 'right' }
+      )
+    }
+    if (data.shippingPercent) {
+      summaryY += 14
+      pdf.text(
+        `Shipping (${data.shippingPercent}%)   $${((data.subtotal * data.shippingPercent) / 100).toFixed(2)}`,
+        pageWidth - margin,
+        summaryY,
+        { align: 'right' }
+      )
+    }
+
+    summaryY += 10
+    pdf.setDrawColor(209, 213, 219)
+    pdf.line(pageWidth - margin - 170, summaryY, pageWidth - margin, summaryY)
+
+    summaryY += 20
     pdf.setFont('helvetica', 'bold')
-    pdf.setFontSize(12)
+    pdf.setFontSize(13)
     setText(data.accentColor)
-    pdf.text(`Subtotal $${data.subtotal.toFixed(2)}`, pageWidth - margin, y + 28, { align: 'right' })
+    pdf.text(`Grand Total   $${data.grandTotal.toFixed(2)}`, pageWidth - margin, summaryY, { align: 'right' })
 
     pdf.setFillColor(accent.r, accent.g, accent.b)
     pdf.rect(0, pageHeight - 8, pageWidth, 8, 'F')
@@ -367,14 +409,20 @@ export default function PurchaseOrdersPage() {
   // ── Filter ─────────────────────────────────────────────────────────────────
 
   const filteredDocs = useMemo(() => {
+    let result = docs
+    if (vendorFilter) {
+      result = result.filter(d => d.vendorId === vendorFilter)
+    }
     const q = searchQuery.trim().toLowerCase()
-    if (!q) return docs
-    return docs.filter(d =>
-      d.poNumber.toLowerCase().includes(q) ||
-      d.vendorName.toLowerCase().includes(q) ||
-      STATUS_LABELS[d.status].toLowerCase().includes(q)
-    )
-  }, [docs, searchQuery])
+    if (q) {
+      result = result.filter(d =>
+        d.poNumber.toLowerCase().includes(q) ||
+        d.vendorName.toLowerCase().includes(q) ||
+        STATUS_LABELS[d.status].toLowerCase().includes(q)
+      )
+    }
+    return result
+  }, [docs, searchQuery, vendorFilter])
 
   // ── Editor view ────────────────────────────────────────────────────────────
 
@@ -464,12 +512,24 @@ export default function PurchaseOrdersPage() {
       <Card
         title="All Purchase Orders"
         actions={
-          <Input
-            placeholder="Search…"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="h-9 w-48"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={vendorFilter}
+              onChange={e => setVendorFilter(e.target.value)}
+              className="h-9 w-48"
+            >
+              <option value="">All vendors</option>
+              {vendors.map(v => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </Select>
+            <Input
+              placeholder="Search…"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="h-9 w-48"
+            />
+          </div>
         }
       >
         <Table>
@@ -479,7 +539,7 @@ export default function PurchaseOrdersPage() {
               <TableHead>Date</TableHead>
               <TableHead>Vendor</TableHead>
               <TableHead>Items</TableHead>
-              <TableHead>Subtotal</TableHead>
+              <TableHead>Total</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
               <TableHead>Actions</TableHead>
@@ -492,14 +552,13 @@ export default function PurchaseOrdersPage() {
               <TableEmpty colSpan={8} message="No purchase orders yet." />
             ) : (
               filteredDocs.map(doc => {
-                const subtotal = doc.items.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0)
                 return (
                   <TableRow key={doc.id} clickable onClick={() => setEditingDoc(doc)}>
                     <TableCell className="font-mono font-semibold">{doc.poNumber}</TableCell>
                     <TableCell>{doc.poDate}</TableCell>
                     <TableCell>{doc.vendorName || '—'}</TableCell>
                     <TableCell>{doc.items.length}</TableCell>
-                    <TableCell>${subtotal.toFixed(2)}</TableCell>
+                    <TableCell>${doc.grandTotal.toFixed(2)}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(doc.status)}>{STATUS_LABELS[doc.status]}</Badge>
                     </TableCell>

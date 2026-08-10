@@ -369,6 +369,10 @@ export interface PODocumentPrintData {
   shipToPhone: string
   termsConditions: string
   subtotal: number
+  gstPercent: number
+  othersPercent: number
+  shippingPercent: number
+  grandTotal: number
   items: Array<{
     sr: number
     itemName: string
@@ -435,6 +439,9 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   const [items, setItems] = useState<PODocumentItem[]>(
     doc?.items.length ? doc.items : [emptyItem(1)]
   )
+  const [gstPercent, setGstPercent] = useState(doc?.gstPercent ?? 0)
+  const [othersPercent, setOthersPercent] = useState(doc?.othersPercent ?? 0)
+  const [shippingPercent, setShippingPercent] = useState(doc?.shippingPercent ?? 0)
 
   // Derived vendor / brand info
   const selectedVendor = vendors.find(v => v.id === vendorId)
@@ -480,6 +487,8 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     const t = item.totalPrice ?? (item.quantity != null && item.unitPrice != null ? item.quantity * item.unitPrice : 0)
     return sum + (t || 0)
   }, 0)
+  const percentTotal = (gstPercent || 0) + (othersPercent || 0) + (shippingPercent || 0)
+  const grandTotal = subtotal + (subtotal * percentTotal) / 100
 
   useImperativeHandle(ref, () => ({
     getPrintData: () => ({
@@ -494,6 +503,10 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       shipToPhone,
       termsConditions,
       subtotal,
+      gstPercent,
+      othersPercent,
+      shippingPercent,
+      grandTotal,
       items: items.map((item, idx) => {
         const totalPrice = item.totalPrice ?? (item.quantity != null && item.unitPrice != null ? item.quantity * item.unitPrice : 0)
         return {
@@ -509,9 +522,13 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     accentColor,
     doc?.poNumber,
     documentLogoUrl,
+    gstPercent,
+    grandTotal,
     items,
+    othersPercent,
     poDate,
     selectedVendor?.name,
+    shippingPercent,
     shipToAddress,
     shipToName,
     shipToPhone,
@@ -533,6 +550,9 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       poDate,
       termsConditions: termsConditions || null,
       status: doc?.status ?? 'draft',
+      gstPercent,
+      othersPercent,
+      shippingPercent,
       items: items.map((item, idx) => ({
         id: item.id?.startsWith('new-') ? undefined : item.id,
         sr: idx + 1,
@@ -544,7 +564,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
         totalPrice: item.totalPrice ?? null,
       })),
     })
-  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, items, onSave])
+  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, gstPercent, othersPercent, shippingPercent, items, onSave])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -760,14 +780,54 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
               </div>
             </div>
 
-            {/* Subtotal */}
-            <div className="shrink-0 text-right min-w-[160px]">
+            {/* Subtotal + GST / Others / Shipping + Grand Total */}
+            <div className="shrink-0 text-right min-w-[220px]">
               <div className="flex items-center justify-between gap-8 border-t border-zinc-200 pt-3 print:border-zinc-300">
                 <span className="text-sm text-zinc-500">Subtotal</span>
                 <span className="text-sm font-medium">${subtotal.toFixed(2)}</span>
               </div>
-              <div className="mt-3 flex items-center justify-end">
-                <span className="text-xl font-bold" style={{ color: accentColor }}>${subtotal.toFixed(2)}</span>
+              <div className="mt-2 flex items-center justify-between gap-8">
+                <label className="text-sm text-zinc-500">GST %</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={gstPercent === 0 ? '' : gstPercent}
+                  onChange={e => setGstPercent(parseFloat(e.target.value) || 0)}
+                  className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
+                  style={{ borderColor: accentColor }}
+                  placeholder="0"
+                />
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-8">
+                <label className="text-sm text-zinc-500">Others %</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={othersPercent === 0 ? '' : othersPercent}
+                  onChange={e => setOthersPercent(parseFloat(e.target.value) || 0)}
+                  className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
+                  style={{ borderColor: accentColor }}
+                  placeholder="0"
+                />
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-8">
+                <label className="text-sm text-zinc-500">Shipping %</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={shippingPercent === 0 ? '' : shippingPercent}
+                  onChange={e => setShippingPercent(parseFloat(e.target.value) || 0)}
+                  className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
+                  style={{ borderColor: accentColor }}
+                  placeholder="0"
+                />
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-8 border-t border-zinc-200 pt-3 print:border-zinc-300">
+                <span className="text-sm font-semibold" style={{ color: accentColor }}>Grand Total</span>
+                <span className="text-xl font-bold" style={{ color: accentColor }}>${grandTotal.toFixed(2)}</span>
               </div>
             </div>
           </div>
