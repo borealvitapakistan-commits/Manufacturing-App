@@ -16,7 +16,9 @@ import InventoryManagementPage from '@/pages/InventoryManagementPage'
 import InventoryRecordsPage from '@/pages/InventoryRecordsPage'
 import ManufacturingReportsPage from '@/pages/ManufacturingReportsPage'
 import StartManufacturingPage from '@/pages/StartManufacturingPage'
+import ItemsPurchaseOrdersPage from '@/pages/ItemsPurchaseOrdersPage'
 import PurchaseOrdersPage from '@/pages/PurchaseOrdersPage'
+import RequestToQuotePage from '@/pages/RequestToQuotePage'
 import SendItemsPage from '@/pages/SendItemsPage'
 import ProductPriceCalculatorPage from '@/pages/ProductPriceCalculatorPage'
 import MixingPage from '@/pages/manufacturing/MixingPage'
@@ -43,7 +45,9 @@ function Layout() {
           <Route path="/finished-goods" element={<FinishedGoodsPage />} />
           <Route path="/manufacturing-reports" element={<ManufacturingReportsPage />} />
           <Route path="/start-manufacturing" element={<StartManufacturingPage />} />
+          <Route path="/items-purchase-orders" element={<ItemsPurchaseOrdersPage />} />
           <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+          <Route path="/request-to-quote" element={<RequestToQuotePage />} />
           <Route path="/send-items" element={<SendItemsPage />} />
           <Route path="/mixing" element={<MixingPage />} />
           <Route path="/encapsulation" element={<EncapsulationPage />} />

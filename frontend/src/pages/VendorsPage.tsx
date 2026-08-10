@@ -75,11 +75,22 @@ const defaultForm: FormState = {
   isActive: true
 }
 
+type VendorView = 'vendors' | 'create-vendor'
+
 function categoryLabel(value: string): string {
   return vendorCategories.find(item => item.value === value)?.label || value
 }
 
+function viewButtonClass(active: boolean): string {
+  return `rounded-xl border px-4 py-2 text-sm font-medium transition ${
+    active
+      ? 'border-[#1D838D] bg-[#1D838D] text-white'
+      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+  }`
+}
+
 export default function VendorsPage() {
+  const [activeView, setActiveView] = useState<VendorView>('vendors')
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [form, setForm] = useState<FormState>(defaultForm)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -146,6 +157,7 @@ export default function VendorsPage() {
       })
       showToast({ message: editingId ? 'Vendor updated' : 'Vendor saved', type: 'success' })
       resetForm()
+      setActiveView('vendors')
       await loadData()
     } catch (err) {
       console.error('Failed to save vendor:', err)
@@ -174,6 +186,7 @@ export default function VendorsPage() {
 
   function startEdit(vendor: Vendor) {
     setEditingId(vendor.id)
+    setActiveView('create-vendor')
     setForm({
       name: vendor.name || '',
       vendorCode: vendor.vendorCode || '',
@@ -222,11 +235,45 @@ export default function VendorsPage() {
         </div>
       )}
 
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'vendors')}
+          onClick={() => {
+            resetForm()
+            setActiveView('vendors')
+          }}
+        >
+          Vendors
+        </button>
+        <button
+          type="button"
+          className={viewButtonClass(activeView === 'create-vendor')}
+          onClick={() => {
+            resetForm()
+            setActiveView('create-vendor')
+          }}
+        >
+          Create Vendor
+        </button>
+      </div>
+
+      {activeView === 'create-vendor' && (
       <Card
         title={editingId ? 'Edit Vendor' : 'Save Vendor'}
         actions={(
           <div className="flex flex-wrap gap-2">
-            {editingId && <Button variant="ghost" onClick={resetForm}>Cancel</Button>}
+            {editingId && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  resetForm()
+                  setActiveView('vendors')
+                }}
+              >
+                Cancel
+              </Button>
+            )}
             <Button onClick={handleSave} loading={saving}>
               {saving ? 'Saving...' : editingId ? 'Update Vendor' : 'Save Vendor'}
             </Button>
@@ -328,9 +375,11 @@ export default function VendorsPage() {
           </div>
         </div>
       </Card>
+      )}
 
+      {activeView === 'vendors' && (
       <Card
-        title="All Vendors"
+        title="Vendors"
         actions={(
           <Input
             placeholder="Search vendors..."
@@ -392,6 +441,7 @@ export default function VendorsPage() {
           </TableBody>
         </Table>
       </Card>
+      )}
 
       <ConfirmDialog
         open={!!deleteTarget}

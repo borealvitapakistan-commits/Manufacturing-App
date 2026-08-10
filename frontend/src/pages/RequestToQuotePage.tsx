@@ -1,15 +1,17 @@
 // ============================================================================
-// Purchase Orders Page — formal PO documents with PDF export
+// Request to Quote Page — request-for-quote documents with PDF export
+// Structurally a clone of PurchaseOrdersPage.tsx, minus GST/Others/Shipping —
+// a request for a vendor to quote prices, not yet a firm order.
 // ============================================================================
 
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  PODocumentEditor,
-  type PODocumentEditorHandle,
-  type PODocumentPrintData,
-} from '@/components/purchase-orders/PODocumentEditor'
+  RequestToQuoteEditor,
+  type RequestToQuoteEditorHandle,
+  type RequestToQuotePrintData,
+} from '@/components/request-to-quote/RequestToQuoteEditor'
 import {
   Badge,
   Button,
@@ -28,38 +30,38 @@ import {
   useToast,
 } from '@/components/ui'
 import {
-  deletePODocument,
+  deleteRequestToQuoteDocument,
   fetchBrands,
   fetchLabelInventory,
-  fetchPODocuments,
   fetchProducts,
   fetchRawMaterials,
+  fetchRequestToQuoteDocuments,
   fetchVendors,
   initSupabase,
-  savePODocument,
+  saveRequestToQuoteDocument,
 } from '@/lib/supabase/data'
 import { formatDate } from '@/lib/utils'
 import type {
   Brand,
-  CreatePODocumentInput,
+  CreateRequestToQuoteInput,
   LabelInventory,
-  PODocument,
-  PODocumentStatus,
   Product,
   RawMaterial,
+  RequestToQuoteDocument,
+  RequestToQuoteStatus,
   Vendor,
 } from '@/types'
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
-const STATUS_LABELS: Record<PODocumentStatus, string> = {
+const STATUS_LABELS: Record<RequestToQuoteStatus, string> = {
   draft: 'Draft',
   sent: 'Sent',
   received: 'Received',
   canceled: 'Canceled',
 }
 
-function statusVariant(s: PODocumentStatus): 'default' | 'info' | 'success' | 'error' {
+function statusVariant(s: RequestToQuoteStatus): 'default' | 'info' | 'success' | 'error' {
   if (s === 'sent') return 'info'
   if (s === 'received') return 'success'
   if (s === 'canceled') return 'error'
@@ -76,8 +78,8 @@ function viewButtonClass(active: boolean): string {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-export default function PurchaseOrdersPage() {
-  const [docs, setDocs] = useState<PODocument[]>([])
+export default function RequestToQuotePage() {
+  const [docs, setDocs] = useState<RequestToQuoteDocument[]>([])
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -89,13 +91,13 @@ export default function PurchaseOrdersPage() {
   const [error, setError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [vendorFilter, setVendorFilter] = useState('')
-  const [editingDoc, setEditingDoc] = useState<PODocument | null | 'new'>(null)
-  const [deleteTarget, setDeleteTarget] = useState<PODocument | null>(null)
+  const [editingDoc, setEditingDoc] = useState<RequestToQuoteDocument | null | 'new'>(null)
+  const [deleteTarget, setDeleteTarget] = useState<RequestToQuoteDocument | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
 
   const printRef = useRef<HTMLDivElement>(null!)
-  const editorRef = useRef<PODocumentEditorHandle>(null)
+  const editorRef = useRef<RequestToQuoteEditorHandle>(null)
   const { showToast } = useToast()
 
   useEffect(() => { void loadData() }, [])
@@ -106,7 +108,7 @@ export default function PurchaseOrdersPage() {
       setError('')
       await initSupabase()
       const [docList, vendorList, brandList, productList, materialList, labelList] = await Promise.all([
-        fetchPODocuments({ limit: 200 }),
+        fetchRequestToQuoteDocuments({ limit: 200 }),
         fetchVendors(),
         fetchBrands(),
         fetchProducts(),
@@ -120,22 +122,22 @@ export default function PurchaseOrdersPage() {
       setRawMaterials(materialList as RawMaterial[])
       setLabels(labelList as LabelInventory[])
     } catch (err) {
-      console.error('Failed to load PO documents:', err)
-      setError('Failed to load purchase orders.')
+      console.error('Failed to load Request to Quote documents:', err)
+      setError('Failed to load requests to quote.')
     } finally {
       setLoading(false)
     }
   }
 
-  async function handleSave(input: CreatePODocumentInput) {
+  async function handleSave(input: CreateRequestToQuoteInput) {
     try {
       setSaving(true)
-      const saved = await savePODocument(input)
-      showToast({ message: input.id ? 'PO document updated' : `PO ${saved.poNumber} created`, type: 'success' })
+      const saved = await saveRequestToQuoteDocument(input)
+      showToast({ message: input.id ? 'Request to quote updated' : `${saved.rtqNumber} created`, type: 'success' })
       setEditingDoc(saved)
       await loadData()
     } catch (err) {
-      console.error('Failed to save PO document:', err)
+      console.error('Failed to save Request to Quote document:', err)
       showToast({ message: err instanceof Error ? err.message : 'Failed to save', type: 'error' })
     } finally {
       setSaving(false)
@@ -146,13 +148,13 @@ export default function PurchaseOrdersPage() {
     if (!deleteTarget) return
     try {
       setDeleting(true)
-      await deletePODocument(deleteTarget.id)
+      await deleteRequestToQuoteDocument(deleteTarget.id)
       setDocs(prev => prev.filter(d => d.id !== deleteTarget.id))
       setDeleteTarget(null)
       if (editingDoc && editingDoc !== 'new' && editingDoc.id === deleteTarget.id) {
         setEditingDoc(null)
       }
-      showToast({ message: 'PO document deleted', type: 'success' })
+      showToast({ message: 'Request to quote deleted', type: 'success' })
     } catch (err) {
       console.error(err)
       showToast({ message: 'Failed to delete', type: 'error' })
@@ -182,7 +184,7 @@ export default function PurchaseOrdersPage() {
   }
 
   function sanitizeFileName(name: string) {
-    return name.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim() || 'PO-document'
+    return name.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim() || 'RTQ-document'
   }
 
   function readBlobAsDataUrl(blob: Blob) {
@@ -227,7 +229,7 @@ export default function PurchaseOrdersPage() {
     }
   }
 
-  async function renderPODocumentPdf(data: PODocumentPrintData) {
+  async function renderRequestToQuotePdf(data: RequestToQuotePrintData) {
     const { jsPDF } = await import('jspdf')
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
     const pageWidth = pdf.internal.pageSize.getWidth()
@@ -272,7 +274,7 @@ export default function PurchaseOrdersPage() {
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(24)
     setText(data.accentColor)
-    pdf.text('Purchase Order', pageWidth - margin, y + 16, { align: 'right' })
+    pdf.text('Request to Quote', pageWidth - margin, y + 16, { align: 'right' })
 
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(8)
@@ -281,16 +283,16 @@ export default function PurchaseOrdersPage() {
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(10)
     setText('#4b5563')
-    pdf.text(data.poDate || '-', pageWidth - margin, y + 52, { align: 'right' })
+    pdf.text(data.rtqDate || '-', pageWidth - margin, y + 52, { align: 'right' })
 
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(8)
     setText('#111827')
-    pdf.text('PO NUMBER', pageWidth - margin, y + 70, { align: 'right' })
+    pdf.text('RTQ NUMBER', pageWidth - margin, y + 70, { align: 'right' })
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(10)
     setText('#4b5563')
-    pdf.text(data.poNumber, pageWidth - margin, y + 84, { align: 'right' })
+    pdf.text(data.rtqNumber, pageWidth - margin, y + 84, { align: 'right' })
 
     y = 125
     pdf.setDrawColor(229, 231, 235)
@@ -381,8 +383,7 @@ export default function PurchaseOrdersPage() {
     y += 16
     addPageIfNeeded(150)
 
-    // Note box (left) + Subtotal/GST/Other/Shipping/Total block (right),
-    // side by side — matches the reference PO layout.
+    // Note box (left) + Total block (right), side by side.
     const summaryBoxWidth = 200
     const summaryX = pageWidth - margin - summaryBoxWidth
     const noteBoxWidth = summaryX - margin - 20
@@ -403,58 +404,20 @@ export default function PurchaseOrdersPage() {
       pdf.text(textLines(data.termsConditions, noteBoxWidth - 12), margin + 6, boxTop + 32)
     }
 
-    // Totals — bordered rows with alternating fill, matching the reference's mini-table.
-    const summaryRowHeight = 18
-    const summaryRows: Array<{ label: string; value: string }> = [
-      { label: 'SUBTOTAL', value: `$${data.subtotal.toFixed(2)}` },
-      {
-        label: `GST${data.gstPercent ? ` (${data.gstPercent}%)` : ''}`,
-        value: `$${((data.subtotal * data.gstPercent) / 100).toFixed(2)}`,
-      },
-      {
-        label: `OTHER${data.othersPercent ? ` (${data.othersPercent}%)` : ''}`,
-        value: `$${((data.subtotal * data.othersPercent) / 100).toFixed(2)}`,
-      },
-      {
-        label: `SHIPPING${data.shippingPercent ? ` (${data.shippingPercent}%)` : ''}`,
-        value: `$${((data.subtotal * data.shippingPercent) / 100).toFixed(2)}`,
-      },
-    ]
-    let ty = boxTop
-    summaryRows.forEach((row, index) => {
-      if (index % 2 === 1) {
-        pdf.setFillColor(246, 247, 248)
-        pdf.rect(summaryX - 8, ty, summaryBoxWidth + 8, summaryRowHeight, 'F')
-      }
-      pdf.setFont('helvetica', index === 0 ? 'bold' : 'normal')
-      pdf.setFontSize(9)
-      setText(index === 0 ? '#111827' : '#4b5563')
-      pdf.text(row.label, summaryX, ty + 13)
-      pdf.text(row.value, pageWidth - margin, ty + 13, { align: 'right' })
-      ty += summaryRowHeight
-    })
-    pdf.setDrawColor(209, 213, 219)
-    pdf.rect(summaryX - 8, boxTop, summaryBoxWidth + 8, summaryRowHeight * summaryRows.length)
-    for (let i = 1; i < summaryRows.length; i++) {
-      const ly = boxTop + summaryRowHeight * i
-      pdf.line(summaryX - 8, ly, pageWidth - margin, ly)
-    }
-
     pdf.setFillColor(accent.r, accent.g, accent.b)
-    pdf.rect(summaryX - 8, ty, summaryBoxWidth + 8, 24, 'F')
+    pdf.rect(summaryX - 8, boxTop, summaryBoxWidth + 8, 24, 'F')
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(11)
     pdf.setTextColor(255, 255, 255)
-    pdf.text('TOTAL', summaryX, ty + 16)
-    pdf.text(`$ ${data.grandTotal.toFixed(2)}`, pageWidth - margin, ty + 16, { align: 'right' })
-    ty += 24
+    pdf.text('TOTAL', summaryX, boxTop + 16)
+    pdf.text(`$ ${data.subtotal.toFixed(2)}`, pageWidth - margin, boxTop + 16, { align: 'right' })
 
-    y = Math.max(boxTop + 100, ty + 20)
+    y = boxTop + 100
 
     pdf.setFillColor(accent.r, accent.g, accent.b)
     pdf.rect(0, pageHeight - 8, pageWidth, 8, 'F')
 
-    pdf.save(`${sanitizeFileName(data.poNumber)}.pdf`)
+    pdf.save(`${sanitizeFileName(data.rtqNumber)}.pdf`)
   }
 
   async function handleDownloadPDF() {
@@ -462,7 +425,7 @@ export default function PurchaseOrdersPage() {
     if (!data) return
     setPdfLoading(true)
     try {
-      await renderPODocumentPdf(data)
+      await renderRequestToQuotePdf(data)
     } catch (err) {
       console.error('PDF generation failed:', err)
       showToast({ message: 'PDF download failed. Try Print PDF.', type: 'error' })
@@ -481,7 +444,7 @@ export default function PurchaseOrdersPage() {
     const q = searchQuery.trim().toLowerCase()
     if (q) {
       result = result.filter(d =>
-        d.poNumber.toLowerCase().includes(q) ||
+        d.rtqNumber.toLowerCase().includes(q) ||
         d.vendorName.toLowerCase().includes(q) ||
         STATUS_LABELS[d.status].toLowerCase().includes(q)
       )
@@ -496,8 +459,8 @@ export default function PurchaseOrdersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Purchase Orders</h1>
-        <p className="text-zinc-600 text-sm">Create formal purchase order documents with PDF export</p>
+        <h1 className="text-2xl font-bold">Request to Quote</h1>
+        <p className="text-zinc-600 text-sm">Send vendors a request to quote prices, with PDF export</p>
       </div>
 
       {error && (
@@ -510,14 +473,14 @@ export default function PurchaseOrdersPage() {
           className={viewButtonClass(editingDoc === null)}
           onClick={() => setEditingDoc(null)}
         >
-          Purchase Orders
+          Request to Quote
         </button>
         <button
           type="button"
           className={viewButtonClass(editingDoc !== null)}
           onClick={() => setEditingDoc('new')}
         >
-          Create Purchase Order
+          Create Request to Quote
         </button>
       </div>
 
@@ -526,7 +489,7 @@ export default function PurchaseOrdersPage() {
           {/* PDF / Print toolbar — hidden on print */}
           <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
             <h2 className="text-lg font-semibold">
-              {docObj ? `Edit — ${docObj.poNumber}` : 'New Purchase Order'}
+              {docObj ? `Edit — ${docObj.rtqNumber}` : 'New Request to Quote'}
             </h2>
             <div className="flex gap-2">
               <button
@@ -553,7 +516,7 @@ export default function PurchaseOrdersPage() {
             </div>
           </div>
 
-          <PODocumentEditor
+          <RequestToQuoteEditor
             ref={editorRef}
             doc={docObj}
             vendors={vendors}
@@ -572,7 +535,7 @@ export default function PurchaseOrdersPage() {
 
       {editingDoc === null && (
         <Card
-          title="Purchase Orders"
+          title="Request to Quote"
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <Select
@@ -597,7 +560,7 @@ export default function PurchaseOrdersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>PO Number</TableHead>
+                <TableHead>RTQ Number</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Vendor</TableHead>
                 <TableHead>Items</TableHead>
@@ -611,16 +574,16 @@ export default function PurchaseOrdersPage() {
               {loading ? (
                 <TableLoading colSpan={8} />
               ) : filteredDocs.length === 0 ? (
-                <TableEmpty colSpan={8} message="No purchase orders yet." />
+                <TableEmpty colSpan={8} message="No requests to quote yet." />
               ) : (
                 filteredDocs.map(doc => {
                   return (
                     <TableRow key={doc.id} clickable onClick={() => setEditingDoc(doc)}>
-                      <TableCell className="font-mono font-semibold">{doc.poNumber}</TableCell>
-                      <TableCell>{doc.poDate}</TableCell>
+                      <TableCell className="font-mono font-semibold">{doc.rtqNumber}</TableCell>
+                      <TableCell>{doc.rtqDate}</TableCell>
                       <TableCell>{doc.vendorName || '—'}</TableCell>
                       <TableCell>{doc.items.length}</TableCell>
-                      <TableCell>${doc.grandTotal.toFixed(2)}</TableCell>
+                      <TableCell>${doc.subtotal.toFixed(2)}</TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(doc.status)}>{STATUS_LABELS[doc.status]}</Badge>
                       </TableCell>
@@ -662,8 +625,8 @@ export default function PurchaseOrdersPage() {
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
-        title="Delete Purchase Order?"
-        description={`Delete ${deleteTarget?.poNumber}? This cannot be undone.`}
+        title="Delete Request to Quote?"
+        description={`Delete ${deleteTarget?.rtqNumber}? This cannot be undone.`}
         confirmLabel="Delete"
         variant="danger"
         loading={deleting}

@@ -1,10 +1,10 @@
 from rest_framework import serializers
 
 ORDER_TYPES = ["raw_material", "label", "product", "bottles_lids", "custom"]
-PO_STATUSES = ["draft", "sent", "received", "canceled"]
+RTQ_STATUSES = ["draft", "sent", "received", "canceled"]
 
 
-class PODocumentItemSerializer(serializers.Serializer):
+class RequestToQuoteItemSerializer(serializers.Serializer):
     id = serializers.CharField(required=False, allow_blank=True)
     sr = serializers.IntegerField(required=False)
     orderType = serializers.ChoiceField(choices=ORDER_TYPES, default="raw_material")
@@ -19,7 +19,7 @@ class PODocumentItemSerializer(serializers.Serializer):
     )
 
 
-class PODocumentSerializer(serializers.Serializer):
+class RequestToQuoteSerializer(serializers.Serializer):
     vendorId = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     vendorName = serializers.CharField(required=False, allow_blank=True)
     vendorAddress = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -27,13 +27,10 @@ class PODocumentSerializer(serializers.Serializer):
     shipToAddress = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     shipToPhone = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     brandId = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    poDate = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    rtqDate = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     termsConditions = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    status = serializers.ChoiceField(choices=PO_STATUSES, required=False, default="draft")
-    gstPercent = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=0, required=False)
-    othersPercent = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=0, required=False)
-    shippingPercent = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=0, required=False)
-    items = PODocumentItemSerializer(many=True, required=False, default=list)
+    status = serializers.ChoiceField(choices=RTQ_STATUSES, required=False, default="draft")
+    items = RequestToQuoteItemSerializer(many=True, required=False, default=list)
 
 
-__all__ = ["PODocumentSerializer", "PODocumentItemSerializer", "ORDER_TYPES", "PO_STATUSES"]
+__all__ = ["RequestToQuoteSerializer", "RequestToQuoteItemSerializer", "ORDER_TYPES", "RTQ_STATUSES"]

@@ -523,3 +523,66 @@ export interface CreatePODocumentInput {
     totalPrice?: number | null
   }>
 }
+
+// Request to Quote Document Types
+// Structurally a clone of PODocument*, minus GST/Others/Shipping percentages
+// and the grand-total markup — a request for a vendor to quote prices, not
+// yet a firm order.
+export type RequestToQuoteStatus = 'draft' | 'sent' | 'received' | 'canceled'
+export type RequestToQuoteItemType = 'raw_material' | 'label' | 'product' | 'bottles_lids' | 'custom'
+
+export interface RequestToQuoteItem {
+  id: string
+  rtqDocumentId: string
+  sr: number
+  orderType: RequestToQuoteItemType
+  itemId: string | null
+  itemName: string
+  quantity: number
+  unitPrice: number | null
+  totalPrice: number | null
+}
+
+export interface RequestToQuoteDocument {
+  id: string
+  rtqNumber: string
+  vendorId: string | null
+  vendorName: string
+  vendorAddress: string | null
+  shipToName: string
+  shipToAddress: string | null
+  shipToPhone: string | null
+  brandId: string | null
+  rtqDate: string
+  termsConditions: string | null
+  status: RequestToQuoteStatus
+  subtotal: number
+  items: RequestToQuoteItem[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateRequestToQuoteInput {
+  id?: string
+  rtqNumber?: string
+  vendorId?: string | null
+  vendorName?: string
+  vendorAddress?: string | null
+  shipToName?: string
+  shipToAddress?: string | null
+  shipToPhone?: string | null
+  brandId?: string | null
+  rtqDate?: string
+  termsConditions?: string | null
+  status?: RequestToQuoteStatus
+  items?: Array<{
+    id?: string
+    sr: number
+    orderType: RequestToQuoteItemType
+    itemId?: string | null
+    itemName: string
+    quantity: number
+    unitPrice?: number | null
+    totalPrice?: number | null
+  }>
+}

@@ -1,7 +1,9 @@
 // ============================================================================
-// PO Document Editor
-// Editable purchase-order document with inline pencil-icon fields,
-// type-driven description dropdowns, auto-calculated totals, and brand color.
+// Request to Quote Document Editor
+// Editable request-to-quote document with inline pencil-icon fields,
+// type-driven description dropdowns, auto-calculated subtotal, and brand color.
+// Structurally a clone of PODocumentEditor.tsx, minus GST/Others/Shipping —
+// a request for a vendor to quote prices, not yet a firm order.
 // ============================================================================
 
 'use client'
@@ -9,13 +11,13 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type {
   Brand,
-  CreatePODocumentInput,
+  CreateRequestToQuoteInput,
   LabelInventory,
-  PODocument,
-  PODocumentItem,
-  PODocumentItemType,
   Product,
   RawMaterial,
+  RequestToQuoteDocument,
+  RequestToQuoteItem,
+  RequestToQuoteItemType,
   Vendor,
 } from '@/types'
 
@@ -177,17 +179,17 @@ function InlineDate({ value, accentColor, onSave }: InlineDateProps) {
 // ── Line item row ─────────────────────────────────────────────────────────────
 
 interface LineItemRowProps {
-  item: PODocumentItem
+  item: RequestToQuoteItem
   sr: number
   accentColor: string
   rawMaterials: RawMaterial[]
   products: Product[]
   labels: LabelInventory[]
-  onChange: (updated: PODocumentItem) => void
+  onChange: (updated: RequestToQuoteItem) => void
   onDelete: () => void
 }
 
-const ORDER_TYPE_LABELS: Record<PODocumentItemType, string> = {
+const ORDER_TYPE_LABELS: Record<RequestToQuoteItemType, string> = {
   raw_material: 'Raw Material',
   label: 'Label',
   product: 'Product',
@@ -196,7 +198,7 @@ const ORDER_TYPE_LABELS: Record<PODocumentItemType, string> = {
 }
 
 function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, onChange, onDelete }: LineItemRowProps) {
-  function set(patch: Partial<PODocumentItem>) {
+  function set(patch: Partial<RequestToQuoteItem>) {
     const updated = { ...item, ...patch }
     // auto-calc total
     if (patch.quantity !== undefined || patch.unitPrice !== undefined) {
@@ -207,7 +209,7 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
     onChange(updated)
   }
 
-  function handleTypeChange(orderType: PODocumentItemType) {
+  function handleTypeChange(orderType: RequestToQuoteItemType) {
     set({ orderType, itemId: null, itemName: '' })
   }
 
@@ -238,7 +240,7 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
           {/* type selector — hidden on print */}
           <select
             value={item.orderType}
-            onChange={e => handleTypeChange(e.target.value as PODocumentItemType)}
+            onChange={e => handleTypeChange(e.target.value as RequestToQuoteItemType)}
             className="text-xs text-zinc-500 border border-zinc-200 rounded px-1 py-0.5 print:hidden"
           >
             {Object.entries(ORDER_TYPE_LABELS).map(([v, l]) => (
@@ -307,7 +309,7 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
         />
       </td>
 
-      {/* Unit price */}
+      {/* Unit price — optional (not yet quoted) */}
       <td className="py-2 px-2 text-right w-36 print:py-1">
         <input
           type="number"
@@ -317,7 +319,7 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
           onChange={e => set({ unitPrice: e.target.value ? parseFloat(e.target.value) : null })}
           className="w-full text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-1 py-0.5"
           style={{ borderColor: accentColor }}
-          placeholder="0.00"
+          placeholder="Optional"
         />
       </td>
 
@@ -343,23 +345,23 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
 
 // ── Main editor ───────────────────────────────────────────────────────────────
 
-export interface PODocumentEditorProps {
-  doc: PODocument | null
+export interface RequestToQuoteEditorProps {
+  doc: RequestToQuoteDocument | null
   vendors: Vendor[]
   brands: Brand[]
   rawMaterials: RawMaterial[]
   products: Product[]
   labels: LabelInventory[]
   saving: boolean
-  onSave: (input: CreatePODocumentInput) => Promise<void>
+  onSave: (input: CreateRequestToQuoteInput) => Promise<void>
   onDelete?: () => void
   onBack: () => void
   printRef: React.RefObject<HTMLDivElement>
 }
 
-export interface PODocumentPrintData {
-  poNumber: string
-  poDate: string
+export interface RequestToQuotePrintData {
+  rtqNumber: string
+  rtqDate: string
   accentColor: string
   logoUrl: string
   vendorName: string
@@ -369,10 +371,6 @@ export interface PODocumentPrintData {
   shipToPhone: string
   termsConditions: string
   subtotal: number
-  gstPercent: number
-  othersPercent: number
-  shippingPercent: number
-  grandTotal: number
   items: Array<{
     sr: number
     itemName: string
@@ -382,14 +380,14 @@ export interface PODocumentPrintData {
   }>
 }
 
-export interface PODocumentEditorHandle {
-  getPrintData: () => PODocumentPrintData
+export interface RequestToQuoteEditorHandle {
+  getPrintData: () => RequestToQuotePrintData
 }
 
-function emptyItem(sr: number): PODocumentItem {
+function emptyItem(sr: number): RequestToQuoteItem {
   return {
     id: `new-${Date.now()}-${sr}`,
-    poDocumentId: '',
+    rtqDocumentId: '',
     sr,
     orderType: 'raw_material',
     itemId: null,
@@ -400,7 +398,7 @@ function emptyItem(sr: number): PODocumentItem {
   }
 }
 
-export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEditorProps>(function PODocumentEditor({
+export const RequestToQuoteEditor = forwardRef<RequestToQuoteEditorHandle, RequestToQuoteEditorProps>(function RequestToQuoteEditor({
   doc,
   vendors,
   brands,
@@ -412,7 +410,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   onDelete,
   onBack,
   printRef,
-}: PODocumentEditorProps, ref) {
+}: RequestToQuoteEditorProps, ref) {
   function formatBrandAddress(brand: Brand | null | undefined, separator: ', ' | '\n' = ', ') {
     if (!brand) return ''
     return [
@@ -434,14 +432,11 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   )
   const [shipToPhone, setShipToPhone] = useState(doc?.shipToPhone ?? initialBrand?.phone ?? '')
   const [brandId, setBrandId] = useState(doc?.brandId ?? '')
-  const [poDate, setPoDate] = useState(doc?.poDate ?? new Date().toISOString().slice(0, 10))
+  const [rtqDate, setRtqDate] = useState(doc?.rtqDate ?? new Date().toISOString().slice(0, 10))
   const [termsConditions, setTermsConditions] = useState(doc?.termsConditions ?? '')
-  const [items, setItems] = useState<PODocumentItem[]>(
+  const [items, setItems] = useState<RequestToQuoteItem[]>(
     doc?.items.length ? doc.items : [emptyItem(1)]
   )
-  const [gstPercent, setGstPercent] = useState(doc?.gstPercent ?? 0)
-  const [othersPercent, setOthersPercent] = useState(doc?.othersPercent ?? 0)
-  const [shippingPercent, setShippingPercent] = useState(doc?.shippingPercent ?? 0)
 
   // Derived vendor / brand info
   const selectedVendor = vendors.find(v => v.id === vendorId)
@@ -475,7 +470,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     setItems(prev => [...prev, emptyItem(prev.length + 1)])
   }
 
-  function updateItem(idx: number, updated: PODocumentItem) {
+  function updateItem(idx: number, updated: RequestToQuoteItem) {
     setItems(prev => prev.map((item, i) => i === idx ? updated : item))
   }
 
@@ -487,13 +482,11 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     const t = item.totalPrice ?? (item.quantity != null && item.unitPrice != null ? item.quantity * item.unitPrice : 0)
     return sum + (t || 0)
   }, 0)
-  const percentTotal = (gstPercent || 0) + (othersPercent || 0) + (shippingPercent || 0)
-  const grandTotal = subtotal + (subtotal * percentTotal) / 100
 
   useImperativeHandle(ref, () => ({
     getPrintData: () => ({
-      poNumber: doc?.poNumber ?? 'Draft PO',
-      poDate,
+      rtqNumber: doc?.rtqNumber ?? 'Draft RTQ',
+      rtqDate,
       accentColor,
       logoUrl: documentLogoUrl,
       vendorName: selectedVendor?.name ?? '',
@@ -503,10 +496,6 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       shipToPhone,
       termsConditions,
       subtotal,
-      gstPercent,
-      othersPercent,
-      shippingPercent,
-      grandTotal,
       items: items.map((item, idx) => {
         const totalPrice = item.totalPrice ?? (item.quantity != null && item.unitPrice != null ? item.quantity * item.unitPrice : 0)
         return {
@@ -520,15 +509,11 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     }),
   }), [
     accentColor,
-    doc?.poNumber,
+    doc?.rtqNumber,
     documentLogoUrl,
-    gstPercent,
-    grandTotal,
     items,
-    othersPercent,
-    poDate,
+    rtqDate,
     selectedVendor?.name,
-    shippingPercent,
     shipToAddress,
     shipToName,
     shipToPhone,
@@ -547,12 +532,9 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       shipToAddress: shipToAddress || null,
       shipToPhone: shipToPhone || null,
       brandId: brandId || null,
-      poDate,
+      rtqDate,
       termsConditions: termsConditions || null,
       status: doc?.status ?? 'draft',
-      gstPercent,
-      othersPercent,
-      shippingPercent,
       items: items.map((item, idx) => ({
         id: item.id?.startsWith('new-') ? undefined : item.id,
         sr: idx + 1,
@@ -564,7 +546,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
         totalPrice: item.totalPrice ?? null,
       })),
     })
-  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, gstPercent, othersPercent, shippingPercent, items, onSave])
+  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, rtqDate, termsConditions, items, onSave])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -586,7 +568,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {/* Brand selector */}
           <div className="flex items-center gap-2">
-            <label className="text-sm text-zinc-600">PO brand:</label>
+            <label className="text-sm text-zinc-600">RTQ brand:</label>
             <select
               value={brandId}
               onChange={e => handleBrandChange(e.target.value)}
@@ -618,15 +600,15 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
             className="rounded px-4 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
             style={{ backgroundColor: accentColor }}
           >
-            {saving ? 'Saving…' : doc ? 'Update PO' : 'Save PO'}
+            {saving ? 'Saving…' : doc ? 'Update RTQ' : 'Save RTQ'}
           </button>
         </div>
       </div>
 
-      {/* ── PO Document ─────────────────────────────────────────────────────── */}
+      {/* ── Request to Quote Document ───────────────────────────────────────── */}
       <div
         ref={printRef}
-        id="po-document"
+        id="rtq-document"
         className="bg-white shadow-sm border border-zinc-200 rounded-lg mx-auto print:shadow-none print:border-none print:rounded-none"
         style={{ maxWidth: 900 }}
       >
@@ -653,16 +635,16 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
             </div>
 
             <div className="text-right shrink-0">
-              <h1 className="text-2xl font-bold" style={{ color: accentColor }}>Purchase Order</h1>
+              <h1 className="text-2xl font-bold" style={{ color: accentColor }}>Request to Quote</h1>
               <div className="mb-3 mt-1 text-sm text-zinc-700">
                 <span className="mr-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Date</span>
-                <InlineDate value={poDate} accentColor={accentColor} onSave={setPoDate} />
+                <InlineDate value={rtqDate} accentColor={accentColor} onSave={setRtqDate} />
               </div>
               <div className="text-xs text-zinc-500 mb-0.5">
-                <span className="font-medium">P.O. number</span>
+                <span className="font-medium">RTQ number</span>
               </div>
               <div className="text-sm font-mono font-semibold">
-                {doc?.poNumber ?? <span className="italic text-zinc-400 font-normal">auto-generated on save</span>}
+                {doc?.rtqNumber ?? <span className="italic text-zinc-400 font-normal">auto-generated on save</span>}
               </div>
             </div>
           </div>
@@ -772,7 +754,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
                   <textarea
                     value={termsConditions}
                     onChange={e => setTermsConditions(e.target.value)}
-                    placeholder="Optional — e.g. Please ship everything other than Goldenseal…"
+                    placeholder="Optional — e.g. Please quote lead time along with pricing…"
                     rows={3}
                     className="w-full resize-none text-xs text-zinc-600 outline-none placeholder:text-zinc-300"
                   />
@@ -780,54 +762,11 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
               </div>
             </div>
 
-            {/* Subtotal + GST / Others / Shipping + Grand Total */}
+            {/* Total */}
             <div className="shrink-0 text-right min-w-[220px]">
               <div className="flex items-center justify-between gap-8 border-t border-zinc-200 pt-3 print:border-zinc-300">
-                <span className="text-sm text-zinc-500">Subtotal</span>
-                <span className="text-sm font-medium">${subtotal.toFixed(2)}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between gap-8">
-                <label className="text-sm text-zinc-500">GST %</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={gstPercent === 0 ? '' : gstPercent}
-                  onChange={e => setGstPercent(parseFloat(e.target.value) || 0)}
-                  className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
-                  style={{ borderColor: accentColor }}
-                  placeholder="0"
-                />
-              </div>
-              <div className="mt-2 flex items-center justify-between gap-8">
-                <label className="text-sm text-zinc-500">Others %</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={othersPercent === 0 ? '' : othersPercent}
-                  onChange={e => setOthersPercent(parseFloat(e.target.value) || 0)}
-                  className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
-                  style={{ borderColor: accentColor }}
-                  placeholder="0"
-                />
-              </div>
-              <div className="mt-2 flex items-center justify-between gap-8">
-                <label className="text-sm text-zinc-500">Shipping %</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={shippingPercent === 0 ? '' : shippingPercent}
-                  onChange={e => setShippingPercent(parseFloat(e.target.value) || 0)}
-                  className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
-                  style={{ borderColor: accentColor }}
-                  placeholder="0"
-                />
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-8 border-t border-zinc-200 pt-3 print:border-zinc-300">
-                <span className="text-sm font-semibold" style={{ color: accentColor }}>Grand Total</span>
-                <span className="text-xl font-bold" style={{ color: accentColor }}>${grandTotal.toFixed(2)}</span>
+                <span className="text-sm font-semibold" style={{ color: accentColor }}>Total</span>
+                <span className="text-xl font-bold" style={{ color: accentColor }}>${subtotal.toFixed(2)}</span>
               </div>
             </div>
           </div>

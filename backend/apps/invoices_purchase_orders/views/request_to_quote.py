@@ -1,0 +1,27 @@
+from apps.common.api import TableDetailView, TableListCreateView
+
+from apps.invoices_purchase_orders.serializers.request_to_quote import RequestToQuoteSerializer
+from apps.invoices_purchase_orders.services.request_to_quote import RequestToQuoteService
+
+
+class RequestToQuoteListCreateView(TableListCreateView):
+    service_class = RequestToQuoteService
+    serializer_class = RequestToQuoteSerializer
+
+    def get_filters(self, request):
+        filters = {}
+        vendor_id = request.query_params.get("vendorId")
+        if vendor_id:
+            filters["vendor_id"] = vendor_id
+        status = request.query_params.get("status")
+        if status:
+            filters["status"] = status
+        return filters
+
+
+class RequestToQuoteDetailView(TableDetailView):
+    service_class = RequestToQuoteService
+    serializer_class = RequestToQuoteSerializer
+
+
+__all__ = ["RequestToQuoteListCreateView", "RequestToQuoteDetailView"]

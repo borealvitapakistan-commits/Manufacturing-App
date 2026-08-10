@@ -4,10 +4,12 @@
 import type {
   CreatePODocumentInput,
   CreatePurchaseOrderInput,
+  CreateRequestToQuoteInput,
   FGCategory,
   FinishedGood,
   PODocument,
-  PurchaseOrderType
+  PurchaseOrderType,
+  RequestToQuoteDocument
 } from '@/types'
 import { api, query } from '@/lib/api/client'
 
@@ -594,6 +596,37 @@ export async function savePODocument(input: CreatePODocumentInput): Promise<PODo
 
 export async function deletePODocument(id: string) {
   await api.delete(`/po-documents/${id}`)
+}
+
+export async function fetchRequestToQuoteDocuments(options?: {
+  limit?: number
+  status?: string
+}): Promise<RequestToQuoteDocument[]> {
+  return unwrap(
+    await api.get<Data<RequestToQuoteDocument[]>>(
+      `/request-to-quote-documents${query({ ...options, limit: options?.limit ?? 200 })}`
+    )
+  )
+}
+
+export async function fetchRequestToQuoteDocument(id: string): Promise<RequestToQuoteDocument | null> {
+  return unwrap(await api.get<Data<RequestToQuoteDocument>>(`/request-to-quote-documents/${id}`))
+}
+
+export async function saveRequestToQuoteDocument(
+  input: CreateRequestToQuoteInput
+): Promise<RequestToQuoteDocument> {
+  const { id, rtqNumber, ...payload } = input
+
+  return unwrap(
+    id
+      ? await api.put<Data<RequestToQuoteDocument>>(`/request-to-quote-documents/${id}`, payload)
+      : await api.post<Data<RequestToQuoteDocument>>('/request-to-quote-documents', payload)
+  )
+}
+
+export async function deleteRequestToQuoteDocument(id: string) {
+  await api.delete(`/request-to-quote-documents/${id}`)
 }
 
 export async function fetchCompanySettings() {

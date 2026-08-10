@@ -48,26 +48,14 @@ const traceabilityModules: ModuleLink[] = [
     type: 'Traceability'
   },
   {
-    href: '/vendors',
-    title: 'Vendors',
-    description: 'Manage suppliers, manufacturers, shops and their PO prefixes.',
-    type: 'Traceability'
-  },
-  {
-    href: '/send-items',
-    title: 'Send Items',
-    description: 'Record goods sent to a vendor and deduct them from finished-goods inventory.',
+    href: '/items-purchase-orders',
+    title: 'Items and Purchase Orders',
+    description: 'Manage vendors, sent items, purchase orders, and requests to quote from one area.',
     type: 'Traceability'
   }
 ]
 
 const underDevelopmentModules: ModuleLink[] = [
-  {
-    href: '/purchase-orders',
-    title: 'Purchase Orders',
-    description: 'Purchasing documents remain available while core traceability is connected.',
-    type: 'Under development'
-  },
   {
     href: '/employees',
     title: 'Employees',
