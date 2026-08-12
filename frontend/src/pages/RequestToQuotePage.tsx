@@ -6,7 +6,8 @@
 
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   RequestToQuoteEditor,
   type RequestToQuoteEditorHandle,
@@ -30,12 +31,14 @@ import {
   useToast,
 } from '@/components/ui'
 import {
+  approveRequestToQuoteDocument,
   deleteRequestToQuoteDocument,
   fetchBrands,
   fetchLabelInventory,
   fetchProducts,
   fetchRawMaterials,
   fetchRequestToQuoteDocuments,
+  fetchRequestToQuoteHistory,
   fetchVendors,
   initSupabase,
   saveRequestToQuoteDocument,
@@ -59,11 +62,12 @@ const STATUS_LABELS: Record<RequestToQuoteStatus, string> = {
   sent: 'Sent',
   received: 'Received',
   canceled: 'Canceled',
+  moved_to_po: 'Move to PO',
 }
 
 function statusVariant(s: RequestToQuoteStatus): 'default' | 'info' | 'success' | 'error' {
   if (s === 'sent') return 'info'
-  if (s === 'received') return 'success'
+  if (s === 'received' || s === 'moved_to_po') return 'success'
   if (s === 'canceled') return 'error'
   return 'default'
 }
@@ -92,13 +96,22 @@ export default function RequestToQuotePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [vendorFilter, setVendorFilter] = useState('')
   const [editingDoc, setEditingDoc] = useState<RequestToQuoteDocument | null | 'new'>(null)
+  const [editingReadOnly, setEditingReadOnly] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<RequestToQuoteDocument | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [approveTarget, setApproveTarget] = useState<RequestToQuoteDocument | null>(null)
+  const [approving, setApproving] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
+
+  // ── Version history (expand/collapse per RTQ number) ────────────────────────
+  const [expandedNumbers, setExpandedNumbers] = useState<Set<string>>(new Set())
+  const [historyByNumber, setHistoryByNumber] = useState<Record<string, RequestToQuoteDocument[]>>({})
+  const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({})
 
   const printRef = useRef<HTMLDivElement>(null!)
   const editorRef = useRef<RequestToQuoteEditorHandle>(null)
   const { showToast } = useToast()
+  const navigate = useNavigate()
 
   useEffect(() => { void loadData() }, [])
 
@@ -133,8 +146,19 @@ export default function RequestToQuotePage() {
     try {
       setSaving(true)
       const saved = await saveRequestToQuoteDocument(input)
-      showToast({ message: input.id ? 'Request to quote updated' : `${saved.rtqNumber} created`, type: 'success' })
+      showToast({
+        message: input.id ? `${saved.rtqNumber} — new version saved (v${saved.version})` : `${saved.rtqNumber} created`,
+        type: 'success',
+      })
       setEditingDoc(saved)
+      setEditingReadOnly(false)
+      // The cached history for this RTQ number is now stale (missing the
+      // version we just saved) - clear it so re-expanding refetches.
+      setHistoryByNumber(prev => {
+        const next = { ...prev }
+        delete next[saved.rtqNumber]
+        return next
+      })
       await loadData()
     } catch (err) {
       console.error('Failed to save Request to Quote document:', err)
@@ -149,9 +173,19 @@ export default function RequestToQuotePage() {
     try {
       setDeleting(true)
       await deleteRequestToQuoteDocument(deleteTarget.id)
-      setDocs(prev => prev.filter(d => d.id !== deleteTarget.id))
+      setDocs(prev => prev.filter(d => d.rtqNumber !== deleteTarget.rtqNumber))
+      setHistoryByNumber(prev => {
+        const next = { ...prev }
+        delete next[deleteTarget.rtqNumber]
+        return next
+      })
+      setExpandedNumbers(prev => {
+        const next = new Set(prev)
+        next.delete(deleteTarget.rtqNumber)
+        return next
+      })
       setDeleteTarget(null)
-      if (editingDoc && editingDoc !== 'new' && editingDoc.id === deleteTarget.id) {
+      if (editingDoc && editingDoc !== 'new' && editingDoc.rtqNumber === deleteTarget.rtqNumber) {
         setEditingDoc(null)
       }
       showToast({ message: 'Request to quote deleted', type: 'success' })
@@ -160,6 +194,59 @@ export default function RequestToQuotePage() {
       showToast({ message: 'Failed to delete', type: 'error' })
     } finally {
       setDeleting(false)
+    }
+  }
+
+  async function handleApprove() {
+    if (!approveTarget) return
+    try {
+      setApproving(true)
+      const po = await approveRequestToQuoteDocument(approveTarget.id)
+      showToast({ message: `Moved to Purchase Order ${po.poNumber}`, type: 'success' })
+      setApproveTarget(null)
+      setHistoryByNumber(prev => {
+        const next = { ...prev }
+        delete next[approveTarget.rtqNumber]
+        return next
+      })
+      await loadData()
+      navigate('/purchase-orders', { state: { openDoc: po } })
+    } catch (err) {
+      console.error('Failed to approve Request to Quote document:', err)
+      showToast({ message: err instanceof Error ? err.message : 'Failed to approve', type: 'error' })
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  // ── Version history ───────────────────────────────────────────────────────
+
+  function openVersion(doc: RequestToQuoteDocument, readOnly: boolean) {
+    setEditingReadOnly(readOnly)
+    setEditingDoc(doc)
+  }
+
+  async function toggleExpand(doc: RequestToQuoteDocument) {
+    const number = doc.rtqNumber
+    setExpandedNumbers(prev => {
+      const next = new Set(prev)
+      if (next.has(number)) {
+        next.delete(number)
+      } else {
+        next.add(number)
+      }
+      return next
+    })
+    if (historyByNumber[number] || historyLoading[number]) return
+    setHistoryLoading(prev => ({ ...prev, [number]: true }))
+    try {
+      const rows = await fetchRequestToQuoteHistory(doc.id)
+      setHistoryByNumber(prev => ({ ...prev, [number]: rows }))
+    } catch (err) {
+      console.error('Failed to load Request to Quote history:', err)
+      showToast({ message: 'Failed to load version history', type: 'error' })
+    } finally {
+      setHistoryLoading(prev => ({ ...prev, [number]: false }))
     }
   }
 
@@ -471,14 +558,14 @@ export default function RequestToQuotePage() {
         <button
           type="button"
           className={viewButtonClass(editingDoc === null)}
-          onClick={() => setEditingDoc(null)}
+          onClick={() => { setEditingDoc(null); setEditingReadOnly(false) }}
         >
           Request to Quote
         </button>
         <button
           type="button"
           className={viewButtonClass(editingDoc !== null)}
-          onClick={() => setEditingDoc('new')}
+          onClick={() => { setEditingDoc('new'); setEditingReadOnly(false) }}
         >
           Create Request to Quote
         </button>
@@ -489,7 +576,11 @@ export default function RequestToQuotePage() {
           {/* PDF / Print toolbar — hidden on print */}
           <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
             <h2 className="text-lg font-semibold">
-              {docObj ? `Edit — ${docObj.rtqNumber}` : 'New Request to Quote'}
+              {docObj
+                ? editingReadOnly
+                  ? `Viewing — ${docObj.rtqNumber} (v${docObj.version}, read-only)`
+                  : `Edit — ${docObj.rtqNumber}`
+                : 'New Request to Quote'}
             </h2>
             <div className="flex gap-2">
               <button
@@ -525,9 +616,10 @@ export default function RequestToQuotePage() {
             products={products}
             labels={labels}
             saving={saving}
+            readOnly={editingReadOnly}
             onSave={handleSave}
-            onDelete={docObj ? () => setDeleteTarget(docObj) : undefined}
-            onBack={() => setEditingDoc(null)}
+            onDelete={docObj && !editingReadOnly ? () => setDeleteTarget(docObj) : undefined}
+            onBack={() => { setEditingDoc(null); setEditingReadOnly(false) }}
             printRef={printRef}
           />
         </div>
@@ -561,58 +653,125 @@ export default function RequestToQuotePage() {
             <TableHeader>
               <TableRow>
                 <TableHead>RTQ Number</TableHead>
-                <TableHead>Date</TableHead>
+                <TableHead>Brand</TableHead>
                 <TableHead>Vendor</TableHead>
-                <TableHead>Items</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableLoading colSpan={8} />
+                <TableLoading colSpan={4} />
               ) : filteredDocs.length === 0 ? (
-                <TableEmpty colSpan={8} message="No requests to quote yet." />
+                <TableEmpty colSpan={4} message="No requests to quote yet." />
               ) : (
                 filteredDocs.map(doc => {
+                  const expanded = expandedNumbers.has(doc.rtqNumber)
+                  const brandName = brands.find(b => b.id === doc.brandId)?.name
                   return (
-                    <TableRow key={doc.id} clickable onClick={() => setEditingDoc(doc)}>
-                      <TableCell className="font-mono font-semibold">{doc.rtqNumber}</TableCell>
-                      <TableCell>{doc.rtqDate}</TableCell>
-                      <TableCell>{doc.vendorName || '—'}</TableCell>
-                      <TableCell>{doc.items.length}</TableCell>
-                      <TableCell>${doc.subtotal.toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(doc.status)}>{STATUS_LABELS[doc.status]}</Badge>
-                      </TableCell>
-                      <TableCell>{formatDate(doc.createdAt)}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="subtle"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setEditingDoc(doc)
-                            }}
+                    <Fragment key={doc.id}>
+                      <TableRow clickable onClick={() => void toggleExpand(doc)}>
+                        <TableCell className="font-mono font-semibold">{doc.rtqNumber}</TableCell>
+                        <TableCell>{brandName || '—'}</TableCell>
+                        <TableCell>{doc.vendorName || '—'}</TableCell>
+                        <TableCell>
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className={`h-4 w-4 text-zinc-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
                           >
-                            Edit
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setDeleteTarget(doc)
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                          </svg>
+                        </TableCell>
+                      </TableRow>
+
+                      {expanded && (
+                        <TableRow>
+                          <TableCell colSpan={4} className="bg-zinc-50 p-0">
+                            {historyLoading[doc.rtqNumber] ? (
+                              <div className="p-4 text-center text-sm text-zinc-400">Loading version history…</div>
+                            ) : (
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>RTQ Number</TableHead>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Vendor</TableHead>
+                                    <TableHead>Items</TableHead>
+                                    <TableHead>Total</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Created</TableHead>
+                                    <TableHead>Actions</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {(historyByNumber[doc.rtqNumber] ?? []).map(version => (
+                                    <TableRow
+                                      key={version.id}
+                                      clickable
+                                      onClick={() => openVersion(version, !version.isLatest)}
+                                    >
+                                      <TableCell className="font-mono font-semibold">
+                                        {version.rtqNumber}
+                                        {version.isLatest && (
+                                          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                            Latest
+                                          </span>
+                                        )}
+                                      </TableCell>
+                                      <TableCell>{version.rtqDate}</TableCell>
+                                      <TableCell>{version.vendorName || '—'}</TableCell>
+                                      <TableCell>{version.items.length}</TableCell>
+                                      <TableCell>${version.subtotal.toFixed(2)}</TableCell>
+                                      <TableCell>
+                                        <Badge variant={statusVariant(version.status)}>{STATUS_LABELS[version.status]}</Badge>
+                                      </TableCell>
+                                      <TableCell>{formatDate(version.createdAt)}</TableCell>
+                                      <TableCell>
+                                        <div className="flex gap-2">
+                                          <Button
+                                            variant="subtle"
+                                            size="sm"
+                                            onClick={(event) => {
+                                              event.stopPropagation()
+                                              openVersion(version, !version.isLatest)
+                                            }}
+                                          >
+                                            {version.isLatest ? 'Edit' : 'View'}
+                                          </Button>
+                                          {version.isLatest && version.status !== 'moved_to_po' && (
+                                            <Button
+                                              variant="subtle"
+                                              size="sm"
+                                              onClick={(event) => {
+                                                event.stopPropagation()
+                                                setApproveTarget(version)
+                                              }}
+                                            >
+                                              Approve
+                                            </Button>
+                                          )}
+                                          <Button
+                                            variant="danger"
+                                            size="sm"
+                                            onClick={(event) => {
+                                              event.stopPropagation()
+                                              setDeleteTarget(version)
+                                            }}
+                                          >
+                                            Delete
+                                          </Button>
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
                   )
                 })
               )}
@@ -630,6 +789,16 @@ export default function RequestToQuotePage() {
         confirmLabel="Delete"
         variant="danger"
         loading={deleting}
+      />
+
+      <ConfirmDialog
+        open={!!approveTarget}
+        onClose={() => setApproveTarget(null)}
+        onConfirm={handleApprove}
+        title="Approve and move to Purchase Order?"
+        description={`This creates a new Purchase Order from ${approveTarget?.rtqNumber} with all its vendor, brand, and item details, and marks this Request to Quote as moved.`}
+        confirmLabel="Approve"
+        loading={approving}
       />
     </div>
   )

@@ -28,6 +28,7 @@ type PricingLine = {
   requiredKg?: number
   pricePerKg: number
   cost: number
+  qtyInStockKg?: number
 }
 
 type PricingReport = {
@@ -236,7 +237,7 @@ export default function ProductPriceCalculatorPage() {
     setCadLoading(true)
     setCadStatus(force ? 'Refreshing CAD rate...' : 'Loading CAD rate...')
     try {
-      const response = await api.get<{ data: CurrencyRateReport }>('/reports/currency-rate/')
+      const response = await api.get<{ data: CurrencyRateReport }>('/currency-rate/')
       const nextRate = rateText(response.data.rate)
       setForm(current => {
         if (!force && current.cadRate !== '') return current
@@ -273,7 +274,7 @@ export default function ProductPriceCalculatorPage() {
     setError('')
     try {
       const response = await api.post<{ data: PricingReport }>(
-        `/reports/product-pricing/${selectedProductId}/`,
+        `/product-price-calculator/${selectedProductId}/`,
         {
           unitsPerContainer: toNumber(form.unitsPerContainer),
           containerCount: toNumber(form.containerCount),
@@ -304,6 +305,170 @@ export default function ProductPriceCalculatorPage() {
         setLoading(false)
       }
     }
+  }
+
+  type ReportMode = 'overall' | 'stock' | 'price'
+
+  async function generateReport(mode: ReportMode) {
+    if (!report || !selectedProduct) return
+    const { jsPDF } = await import('jspdf')
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const margin = 36
+    const contentWidth = pageWidth - margin * 2
+    let y = margin
+
+    const bottleCount = toNumber(form.containerCount)
+    const titleSuffix = mode === 'stock'
+      ? 'formulation vs. stock'
+      : mode === 'price'
+        ? 'formulation vs. price'
+        : 'formulation, price & stock'
+    const title = `${selectedProduct.name} ${titleSuffix} for ${bottleCount.toLocaleString()} bottles`
+
+    pdf.setFont('helvetica', 'bold')
+    pdf.setFontSize(13)
+    pdf.setTextColor(17, 24, 39)
+    pdf.text(title, pageWidth / 2, y, { align: 'center' })
+    y += 14
+    pdf.setDrawColor(17, 24, 39)
+    pdf.line(margin, y, pageWidth - margin, y)
+    y += 20
+
+    // The overall report leads with a cost summary instead of a per-line
+    // raw-material price - what matters at that level is the total spend,
+    // not what each individual ingredient costs.
+    const cadRate = report.cadRate
+    if (mode === 'overall') {
+      const summaryRows: Array<[string, string]> = [
+        ['Product', selectedProduct.name],
+        ['Bottles selected', bottleCount.toLocaleString()],
+        [
+          'Total raw material cost required',
+          cadRate ? `${money(report.rawMaterialCost)}  /  ${money(report.rawMaterialCost * cadRate, 'CAD')}` : money(report.rawMaterialCost)
+        ],
+        [
+          'Total cost to produce all selected bottles',
+          cadRate ? `${money(report.grandTotal)}  /  ${money(report.grandTotalCAD, 'CAD')}` : money(report.grandTotal)
+        ],
+        [
+          'Cost to produce one bottle',
+          cadRate ? `${money(report.costPerContainer)}  /  ${money(report.costPerContainer * cadRate, 'CAD')}` : money(report.costPerContainer)
+        ],
+      ]
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(10)
+      summaryRows.forEach(([label, value]) => {
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(75, 85, 99)
+        pdf.text(`${label}:`, margin, y)
+        pdf.setFont('helvetica', 'normal')
+        pdf.setTextColor(17, 24, 39)
+        pdf.text(value, margin + 220, y)
+        y += 16
+      })
+      y += 10
+      pdf.setDrawColor(209, 213, 219)
+      pdf.line(margin, y, pageWidth - margin, y)
+      y += 18
+    }
+
+    // Which numeric columns appear (besides Required Kg, which is always
+    // shown) depends on the report mode - the overall report leaves
+    // per-line pricing out entirely (see summary above), the stock-only
+    // report never shows pricing, and the price-only report shows both
+    // USD and CAD (via the currency-rate API) for price and cost.
+    const numericColumns: Array<{ label: string; width: number; getValue: (line: PricingLine) => string }> = []
+    if (mode === 'price') {
+      numericColumns.push({ label: 'USD/Kg', width: 55, getValue: line => numberText(line.pricePerKg, 2) })
+      numericColumns.push({ label: 'CAD/Kg', width: 55, getValue: line => cadRate ? numberText(line.pricePerKg * cadRate, 2) : '-' })
+      numericColumns.push({ label: 'Cost USD', width: 58, getValue: line => `$${line.cost.toFixed(2)}` })
+      numericColumns.push({ label: 'Cost CAD', width: 58, getValue: line => cadRate ? `$${(line.cost * cadRate).toFixed(2)}` : '-' })
+    }
+    if (mode === 'overall' || mode === 'stock') {
+      numericColumns.push({ label: 'In Stock Kg', width: 65, getValue: line => numberText(line.qtyInStockKg ?? 0, 4) })
+    }
+
+    const colSrWidth = 30
+    const colReqWidth = 65
+    // The Raw Material column absorbs whatever width remains so the table
+    // always spans the full page width, now that Comments no longer exists
+    // to soak up the leftover space - stretching it (a text column) instead
+    // of a numeric column keeps the right-aligned numbers from floating in
+    // a sea of empty space.
+    const numericTotalWidth = numericColumns.reduce((sum, col) => sum + col.width, 0)
+    const colRmWidth = contentWidth - colSrWidth - colReqWidth - numericTotalWidth
+
+    const x0 = margin
+    const x1 = x0 + colSrWidth
+    const x2 = x1 + colRmWidth
+    const x3 = x2 + colReqWidth
+    const numericBoundaries: number[] = []
+    let cursor = x3
+    numericColumns.forEach(col => {
+      cursor += col.width
+      numericBoundaries.push(cursor)
+    })
+    const dividers = [x1, x2, x3, ...numericBoundaries]
+
+    function addPageIfNeeded(nextHeight: number) {
+      if (y + nextHeight <= pageHeight - margin) return
+      pdf.addPage()
+      y = margin
+    }
+
+    const headerHeight = 22
+    pdf.setFillColor(240, 240, 240)
+    pdf.rect(x0, y, contentWidth, headerHeight, 'F')
+    pdf.setDrawColor(120, 120, 120)
+    pdf.rect(x0, y, contentWidth, headerHeight)
+    dividers.forEach(x => pdf.line(x, y, x, y + headerHeight))
+    pdf.setFont('helvetica', 'bold')
+    pdf.setFontSize(9)
+    pdf.setTextColor(17, 24, 39)
+    pdf.text('Sr', x0 + 6, y + 14)
+    pdf.text('RM', x1 + 6, y + 14)
+    pdf.text('Required Kg', x3 - 6, y + 14, { align: 'right' })
+    numericColumns.forEach((col, i) => {
+      pdf.text(col.label, numericBoundaries[i] - 6, y + 14, { align: 'right' })
+    })
+    y += headerHeight
+
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(9)
+
+    report.pricingLines.forEach(line => {
+      const name = line.rawMaterialName || '-'
+      const nameLines = pdf.splitTextToSize(name, colRmWidth - 12) as string[]
+      const rowHeight = Math.max(22, nameLines.length * 11 + 8)
+      addPageIfNeeded(rowHeight)
+
+      const rowTop = y
+      pdf.setDrawColor(180, 180, 180)
+      pdf.rect(x0, rowTop, contentWidth, rowHeight)
+      dividers.forEach(x => pdf.line(x, rowTop, x, rowTop + rowHeight))
+
+      const textY = rowTop + 14
+      pdf.setTextColor(17, 24, 39)
+      const required = line.requiredKg ?? line.computedWeightKg
+      pdf.text(String(line.sr), x0 + 6, textY)
+      pdf.text(nameLines, x1 + 6, textY)
+      pdf.text(numberText(required, 4), x3 - 6, textY, { align: 'right' })
+      numericColumns.forEach((col, i) => {
+        pdf.text(col.getValue(line), numericBoundaries[i] - 6, textY, { align: 'right' })
+      })
+
+      y += rowHeight
+    })
+
+    const suffix = mode === 'stock'
+      ? 'formulation-vs-stock'
+      : mode === 'price'
+        ? 'formulation-vs-price'
+        : 'formulation-overview'
+    const fileName = `${selectedProduct.name}-${suffix}`.replace(/[\\/:*?"<>|]+/g, '-')
+    pdf.save(`${fileName}.pdf`)
   }
 
   return (
@@ -393,7 +558,40 @@ export default function ProductPriceCalculatorPage() {
         </Card>
       </div>
 
-      <Card title="Raw Materials">
+      <Card
+        title="Raw Materials — Formulation vs. Stock"
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!report || report.pricingLines.length === 0}
+              onClick={() => generateReport('overall')}
+            >
+              Overall Report
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!report || report.pricingLines.length === 0}
+              onClick={() => generateReport('stock')}
+            >
+              Stock Only Report
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!report || report.pricingLines.length === 0}
+              onClick={() => generateReport('price')}
+            >
+              Price Only Report
+            </Button>
+          </div>
+        }
+      >
         <Table>
           <TableHeader>
             <TableRow>
@@ -401,6 +599,7 @@ export default function ProductPriceCalculatorPage() {
               <TableHead>Raw Material</TableHead>
               <TableHead className="w-40">Label Claim</TableHead>
               <TableHead className="w-36">Required KG</TableHead>
+              <TableHead className="w-36">In Stock KG</TableHead>
               <TableHead className="w-40">Price per KG</TableHead>
               <TableHead className="w-36">Total</TableHead>
             </TableRow>
@@ -408,35 +607,55 @@ export default function ProductPriceCalculatorPage() {
           <TableBody>
             {!report || report.pricingLines.length === 0 ? (
               <TableEmpty
-                colSpan={6}
+                colSpan={7}
                 message={loading ? 'Updating pricing...' : 'Select a product and enter number of bottles.'}
               />
-            ) : report.pricingLines.map(line => (
-              <TableRow key={`${lineKey(line)}-${line.sr}`}>
-                <TableCell>{line.sr}</TableCell>
-                <TableCell className="font-medium">
-                  {line.rawMaterialName || '-'}
-                  {line.rawMaterialCode && (
-                    <span className="mt-1 block font-mono text-xs text-zinc-500">{line.rawMaterialCode}</span>
-                  )}
-                </TableCell>
-                <TableCell>{line.labelClaim || '-'}</TableCell>
-                <TableCell>{numberText(line.requiredKg ?? line.computedWeightKg, 6)}</TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={priceOverrides[lineKey(line)] ?? String(line.pricePerKg)}
-                    onChange={event => setPriceOverrides(current => ({
-                      ...current,
-                      [lineKey(line)]: event.target.value
-                    }))}
-                  />
-                </TableCell>
-                <TableCell>{money(line.cost)}</TableCell>
-              </TableRow>
-            ))}
+            ) : report.pricingLines.map(line => {
+              const required = line.requiredKg ?? line.computedWeightKg
+              const inStock = line.qtyInStockKg ?? 0
+              const short = inStock < required
+              return (
+                <TableRow key={`${lineKey(line)}-${line.sr}`}>
+                  <TableCell>{line.sr}</TableCell>
+                  <TableCell className="font-medium">
+                    {line.rawMaterialName || '-'}
+                    {line.rawMaterialCode && (
+                      <span className="mt-1 block font-mono text-xs text-zinc-500">{line.rawMaterialCode}</span>
+                    )}
+                  </TableCell>
+                  <TableCell>{line.labelClaim || '-'}</TableCell>
+                  <TableCell>{numberText(required, 6)}</TableCell>
+                  <TableCell className={short ? 'font-semibold text-rose-600' : 'text-emerald-700'}>
+                    {numberText(inStock, 4)}
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={priceOverrides[lineKey(line)] ?? String(line.pricePerKg)}
+                      onChange={event => setPriceOverrides(current => ({
+                        ...current,
+                        [lineKey(line)]: event.target.value
+                      }))}
+                    />
+                    {report.cadRate ? (
+                      <span className="mt-1 block text-xs text-slate-500">
+                        ≈ {money(toNumber(priceOverrides[lineKey(line)] ?? String(line.pricePerKg)) * report.cadRate, 'CAD')}
+                      </span>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    {money(line.cost)}
+                    {report.cadRate ? (
+                      <span className="mt-1 block text-xs text-slate-500">
+                        ≈ {money(line.cost * report.cadRate, 'CAD')}
+                      </span>
+                    ) : null}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
       </Card>

@@ -1,3 +1,6 @@
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from apps.common.api import TableDetailView, TableListCreateView
 
 from apps.invoices_purchase_orders.serializers.po_documents import PODocumentSerializer
@@ -24,4 +27,9 @@ class PODocumentDetailView(TableDetailView):
     serializer_class = PODocumentSerializer
 
 
-__all__ = ["PODocumentListCreateView", "PODocumentDetailView"]
+class PODocumentHistoryView(APIView):
+    def get(self, request, item_id):
+        return Response({"data": PODocumentService.history(str(item_id))})
+
+
+__all__ = ["PODocumentListCreateView", "PODocumentDetailView", "PODocumentHistoryView"]

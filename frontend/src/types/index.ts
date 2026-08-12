@@ -458,7 +458,7 @@ export interface DeleteCascadeResult {
 }
 
 // PO Document Types
-export type PODocumentStatus = 'draft' | 'sent' | 'received' | 'canceled'
+export type PODocumentStatus = 'draft' | 'sent' | 'received' | 'canceled' | 'approved'
 export type PODocumentItemType = 'raw_material' | 'label' | 'product' | 'bottles_lids' | 'custom'
 
 export interface PODocumentItem {
@@ -476,6 +476,9 @@ export interface PODocumentItem {
 export interface PODocument {
   id: string
   poNumber: string
+  version: number
+  isLatest?: boolean
+  versionCount?: number
   vendorId: string | null
   vendorName: string
   vendorAddress: string | null
@@ -488,8 +491,8 @@ export interface PODocument {
   status: PODocumentStatus
   subtotal: number
   gstPercent: number
-  othersPercent: number
-  shippingPercent: number
+  othersValue: number
+  shippingValue: number
   grandTotal: number
   items: PODocumentItem[]
   createdAt: number
@@ -510,8 +513,8 @@ export interface CreatePODocumentInput {
   termsConditions?: string | null
   status?: PODocumentStatus
   gstPercent?: number
-  othersPercent?: number
-  shippingPercent?: number
+  othersValue?: number
+  shippingValue?: number
   items?: Array<{
     id?: string
     sr: number
@@ -528,7 +531,7 @@ export interface CreatePODocumentInput {
 // Structurally a clone of PODocument*, minus GST/Others/Shipping percentages
 // and the grand-total markup — a request for a vendor to quote prices, not
 // yet a firm order.
-export type RequestToQuoteStatus = 'draft' | 'sent' | 'received' | 'canceled'
+export type RequestToQuoteStatus = 'draft' | 'sent' | 'received' | 'canceled' | 'moved_to_po'
 export type RequestToQuoteItemType = 'raw_material' | 'label' | 'product' | 'bottles_lids' | 'custom'
 
 export interface RequestToQuoteItem {
@@ -546,6 +549,9 @@ export interface RequestToQuoteItem {
 export interface RequestToQuoteDocument {
   id: string
   rtqNumber: string
+  version: number
+  isLatest?: boolean
+  versionCount?: number
   vendorId: string | null
   vendorName: string
   vendorAddress: string | null

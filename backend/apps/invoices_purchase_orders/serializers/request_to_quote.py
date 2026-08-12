@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 ORDER_TYPES = ["raw_material", "label", "product", "bottles_lids", "custom"]
-RTQ_STATUSES = ["draft", "sent", "received", "canceled"]
+RTQ_STATUSES = ["draft", "sent", "received", "canceled", "moved_to_po"]
 
 
 class RequestToQuoteItemSerializer(serializers.Serializer):

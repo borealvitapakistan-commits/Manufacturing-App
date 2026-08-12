@@ -7,7 +7,7 @@ from services import db
 from services.base_service import ServiceError
 
 ORDER_TYPES = {"raw_material", "label", "product", "bottles_lids", "custom"}
-STATUSES = {"draft", "sent", "received", "canceled"}
+STATUSES = {"draft", "sent", "received", "canceled", "approved"}
 
 
 class PODocumentService:
@@ -56,6 +56,7 @@ class PODocumentService:
         return {
             "id": doc_id,
             "poNumber": row.get("po_number") or "",
+            "version": int(row.get("version") or 1),
             "vendorId": str(row["vendor_id"]) if row.get("vendor_id") else None,
             "vendorName": row.get("vendor_name") or "",
             "vendorAddress": row.get("vendor_address"),
@@ -68,8 +69,8 @@ class PODocumentService:
             "status": row.get("status") or "draft",
             "subtotal": db.as_float(row.get("subtotal")),
             "gstPercent": db.as_float(row.get("gst_percent")),
-            "othersPercent": db.as_float(row.get("others_percent")),
-            "shippingPercent": db.as_float(row.get("shipping_percent")),
+            "othersValue": db.as_float(row.get("others_value")),
+            "shippingValue": db.as_float(row.get("shipping_value")),
             "grandTotal": db.as_float(row.get("grand_total")),
             "items": [cls._item_to_app(item) for item in items],
             "createdAt": db.timestamp_ms(row.get("created_at")),
@@ -114,12 +115,13 @@ class PODocumentService:
         items: list[dict[str, Any]],
         *,
         gst_percent: Decimal,
-        others_percent: Decimal,
-        shipping_percent: Decimal,
+        others_value: Decimal,
+        shipping_value: Decimal,
     ) -> tuple[Decimal, Decimal]:
+        # GST is a percentage of the subtotal; Others and Shipping are flat
+        # dollar amounts added directly (e.g. subtotal 40 + shipping 90 = 130).
         subtotal = sum((item["total_price"] or Decimal("0")) for item in items) or Decimal("0")
-        percent_total = gst_percent + others_percent + shipping_percent
-        grand_total = subtotal + (subtotal * percent_total / Decimal("100"))
+        grand_total = subtotal + (subtotal * gst_percent / Decimal("100")) + others_value + shipping_value
         return subtotal, grand_total
 
     @classmethod
@@ -154,8 +156,8 @@ class PODocumentService:
 
         for key, column in (
             ("gstPercent", "gst_percent"),
-            ("othersPercent", "others_percent"),
-            ("shippingPercent", "shipping_percent"),
+            ("othersValue", "others_value"),
+            ("shippingValue", "shipping_value"),
         ):
             if key in payload:
                 cleaned[column] = db.as_decimal(payload.get(key))
@@ -169,6 +171,24 @@ class PODocumentService:
     # ------------------------------------------------------------------
 
     @classmethod
+    def _items_by_doc(cls, doc_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        items_by_doc: dict[str, list[dict[str, Any]]] = {doc_id: [] for doc_id in doc_ids}
+        if not doc_ids:
+            return items_by_doc
+        all_items = db.data(
+            db.execute(
+                db.client()
+                .table(cls.ITEMS_TABLE)
+                .select("*")
+                .in_("po_document_id", doc_ids)
+                .order("sr")
+            )
+        )
+        for item in all_items:
+            items_by_doc.setdefault(str(item["po_document_id"]), []).append(item)
+        return items_by_doc
+
+    @classmethod
     def list(
         cls,
         *,
@@ -177,29 +197,37 @@ class PODocumentService:
         order_by: str = "created_at",
         limit: int = 200,
     ) -> list[dict[str, Any]]:
+        # Every save appends a new version under the same po_number rather
+        # than editing in place, so the list view collapses each po_number
+        # down to just its latest (highest-version) row.
         query = db.client().table(cls.TABLE).select("*")
         for key, value in (filters or {}).items():
             if value not in (None, ""):
                 query = query.eq(key, value)
-        query = query.order("created_at", desc=True).limit(max(1, min(int(limit or 200), 1000)))
+        query = query.order("version", desc=True)
         rows = db.data(db.execute(query))
 
-        doc_ids = [str(row["id"]) for row in rows]
-        items_by_doc: dict[str, list[dict[str, Any]]] = {doc_id: [] for doc_id in doc_ids}
-        if doc_ids:
-            all_items = db.data(
-                db.execute(
-                    db.client()
-                    .table(cls.ITEMS_TABLE)
-                    .select("*")
-                    .in_("po_document_id", doc_ids)
-                    .order("sr")
-                )
-            )
-            for item in all_items:
-                items_by_doc.setdefault(str(item["po_document_id"]), []).append(item)
+        latest_by_number: dict[str, dict[str, Any]] = {}
+        count_by_number: dict[str, int] = {}
+        for row in rows:
+            number = row.get("po_number") or ""
+            count_by_number[number] = count_by_number.get(number, 0) + 1
+            if number not in latest_by_number:
+                latest_by_number[number] = row  # rows are ordered by version desc
 
-        return [cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), [])) for row in rows]
+        latest_rows = sorted(
+            latest_by_number.values(), key=lambda r: r.get("created_at") or "", reverse=True
+        )[: max(1, min(int(limit or 200), 1000))]
+
+        items_by_doc = cls._items_by_doc([str(row["id"]) for row in latest_rows])
+
+        result = []
+        for row in latest_rows:
+            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []))
+            doc["versionCount"] = count_by_number.get(row.get("po_number") or "", 1)
+            doc["isLatest"] = True
+            result.append(doc)
+        return result
 
     @classmethod
     def get(cls, item_id: str) -> dict[str, Any]:
@@ -212,20 +240,52 @@ class PODocumentService:
         return cls._db_to_app(row)
 
     @classmethod
+    def history(cls, item_id: str) -> list[dict[str, Any]]:
+        anchor = db.require_row(
+            db.one(
+                db.execute(db.client().table(cls.TABLE).select("po_number").eq("id", item_id).limit(1))
+            ),
+            "Purchase order not found",
+        )
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table(cls.TABLE)
+                .select("*")
+                .eq("po_number", anchor["po_number"])
+                .order("version", desc=True)
+            )
+        )
+        items_by_doc = cls._items_by_doc([str(row["id"]) for row in rows])
+        max_version = max((int(row.get("version") or 1) for row in rows), default=1)
+
+        result = []
+        for row in rows:
+            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []))
+            doc["isLatest"] = int(row.get("version") or 1) == max_version
+            result.append(doc)
+        return result
+
+    @classmethod
     def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
         header = cls._clean_header(payload)
+        if not header.get("brand_id"):
+            raise ServiceError(
+                "Select a brand before saving a Purchase Order — its PO number depends on the brand.",
+                400,
+            )
         items = cls._clean_items(payload.get("items"))
         subtotal, grand_total = cls._compute_totals(
             items,
             gst_percent=header.get("gst_percent", Decimal("0")),
-            others_percent=header.get("others_percent", Decimal("0")),
-            shipping_percent=header.get("shipping_percent", Decimal("0")),
+            others_value=header.get("others_value", Decimal("0")),
+            shipping_value=header.get("shipping_value", Decimal("0")),
         )
         header["subtotal"] = db.decimal_str(subtotal)
         header["grand_total"] = db.decimal_str(grand_total)
-        for percent_key in ("gst_percent", "others_percent", "shipping_percent"):
-            if percent_key in header:
-                header[percent_key] = db.decimal_str(header[percent_key])
+        for money_key in ("gst_percent", "others_value", "shipping_value"):
+            if money_key in header:
+                header[money_key] = db.decimal_str(header[money_key])
 
         created = db.require_row(
             db.one(db.execute(db.client().table(cls.TABLE).insert(header))),
@@ -238,47 +298,111 @@ class PODocumentService:
 
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        # "Update" never edits a row in place - it appends a new version
+        # under the same po_number, so every prior save stays intact.
         existing = db.require_row(
             db.one(
                 db.execute(db.client().table(cls.TABLE).select("*").eq("id", item_id).limit(1))
             ),
             "Purchase order not found",
         )
-        header = cls._clean_header(payload, partial=True)
-
-        items = cls._clean_items(payload.get("items")) if "items" in payload else None
-        if items is not None:
-            gst = header.get("gst_percent", db.as_decimal(existing.get("gst_percent")))
-            others = header.get("others_percent", db.as_decimal(existing.get("others_percent")))
-            shipping = header.get("shipping_percent", db.as_decimal(existing.get("shipping_percent")))
-            subtotal, grand_total = cls._compute_totals(
-                items, gst_percent=gst, others_percent=others, shipping_percent=shipping
+        if existing.get("status") == "approved":
+            raise ServiceError(
+                "This purchase order is approved and can no longer be edited.", 409
             )
-            header["subtotal"] = db.decimal_str(subtotal)
-            header["grand_total"] = db.decimal_str(grand_total)
 
-        for percent_key in ("gst_percent", "others_percent", "shipping_percent"):
-            if percent_key in header:
-                header[percent_key] = db.decimal_str(header[percent_key])
+        po_number = existing.get("po_number")
+        current_version = int(existing.get("version") or 1)
 
-        if header:
-            db.execute(db.client().table(cls.TABLE).update(header).eq("id", item_id))
+        latest = db.one(
+            db.execute(
+                db.client()
+                .table(cls.TABLE)
+                .select("id,version")
+                .eq("po_number", po_number)
+                .order("version", desc=True)
+                .limit(1)
+            )
+        )
+        if latest and str(latest.get("id")) != str(existing["id"]):
+            raise ServiceError(
+                "This is not the latest version of this Purchase Order. "
+                "Refresh and edit the latest version instead.",
+                409,
+            )
 
-        if items is not None:
-            db.execute(db.client().table(cls.ITEMS_TABLE).delete().eq("po_document_id", item_id))
-            cls._insert_items(item_id, items)
+        header = cls._clean_header(payload, partial=True)
+        merged = {**existing, **header}
 
-        return cls.get(item_id)
+        if "items" in payload:
+            items = cls._clean_items(payload.get("items"))
+        else:
+            # Every version is a full snapshot - carry the previous
+            # version's items forward unchanged if none were supplied.
+            items = [
+                {
+                    "sr": item["sr"],
+                    "order_type": item["order_type"],
+                    "item_id": item.get("item_id"),
+                    "item_name": item.get("item_name") or "",
+                    "quantity": db.as_decimal(item.get("quantity")),
+                    "unit_price": (
+                        db.as_decimal(item["unit_price"]) if item.get("unit_price") is not None else None
+                    ),
+                    "total_price": (
+                        db.as_decimal(item["total_price"]) if item.get("total_price") is not None else None
+                    ),
+                }
+                for item in cls._item_rows(str(existing["id"]))
+            ]
+
+        gst = db.as_decimal(merged.get("gst_percent"))
+        others = db.as_decimal(merged.get("others_value"))
+        shipping = db.as_decimal(merged.get("shipping_value"))
+        subtotal, grand_total = cls._compute_totals(
+            items, gst_percent=gst, others_value=others, shipping_value=shipping
+        )
+
+        new_header = {
+            "po_number": po_number,
+            "version": current_version + 1,
+            "vendor_id": merged.get("vendor_id"),
+            "vendor_name": merged.get("vendor_name") or "",
+            "vendor_address": merged.get("vendor_address"),
+            "ship_to_name": merged.get("ship_to_name") or "",
+            "ship_to_address": merged.get("ship_to_address"),
+            "ship_to_phone": merged.get("ship_to_phone"),
+            "brand_id": merged.get("brand_id"),
+            "po_date": merged.get("po_date"),
+            "terms_conditions": merged.get("terms_conditions"),
+            "status": merged.get("status") or "draft",
+            "gst_percent": db.decimal_str(gst),
+            "others_value": db.decimal_str(others),
+            "shipping_value": db.decimal_str(shipping),
+            "subtotal": db.decimal_str(subtotal),
+            "grand_total": db.decimal_str(grand_total),
+        }
+
+        created = db.require_row(
+            db.one(db.execute(db.client().table(cls.TABLE).insert(new_header))),
+            "Purchase order version was not saved",
+            500,
+        )
+        new_id = str(created["id"])
+        cls._insert_items(new_id, items)
+        return cls.get(new_id)
 
     @classmethod
     def delete(cls, item_id: str) -> None:
-        db.require_row(
+        # Deleting any version removes the whole po_number - all versions
+        # together, not just the one that was clicked.
+        existing = db.require_row(
             db.one(
-                db.execute(db.client().table(cls.TABLE).select("id").eq("id", item_id).limit(1))
+                db.execute(db.client().table(cls.TABLE).select("po_number").eq("id", item_id).limit(1))
             ),
             "Purchase order not found",
         )
-        db.execute(db.client().table(cls.TABLE).delete().eq("id", item_id))
+        db.execute(db.client().table(cls.TABLE).delete().eq("po_number", existing["po_number"]))
         return None
 
     @classmethod

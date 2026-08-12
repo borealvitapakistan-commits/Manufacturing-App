@@ -353,6 +353,7 @@ export interface RequestToQuoteEditorProps {
   products: Product[]
   labels: LabelInventory[]
   saving: boolean
+  readOnly?: boolean
   onSave: (input: CreateRequestToQuoteInput) => Promise<void>
   onDelete?: () => void
   onBack: () => void
@@ -406,6 +407,7 @@ export const RequestToQuoteEditor = forwardRef<RequestToQuoteEditorHandle, Reque
   products,
   labels,
   saving,
+  readOnly = false,
   onSave,
   onDelete,
   onBack,
@@ -568,11 +570,12 @@ export const RequestToQuoteEditor = forwardRef<RequestToQuoteEditorHandle, Reque
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {/* Brand selector */}
           <div className="flex items-center gap-2">
-            <label className="text-sm text-zinc-600">RTQ brand:</label>
+            <label className="text-sm text-zinc-600">RTQ brand: *</label>
             <select
               value={brandId}
               onChange={e => handleBrandChange(e.target.value)}
-              className="rounded border border-zinc-300 px-2 py-1 text-sm"
+              disabled={readOnly}
+              className="rounded border border-zinc-300 px-2 py-1 text-sm disabled:bg-zinc-100 disabled:text-zinc-500"
             >
               <option value="">— none —</option>
               {brands.map(b => (
@@ -593,15 +596,21 @@ export const RequestToQuoteEditor = forwardRef<RequestToQuoteEditorHandle, Reque
               Delete
             </button>
           )}
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="rounded px-4 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
-            style={{ backgroundColor: accentColor }}
-          >
-            {saving ? 'Saving…' : doc ? 'Update RTQ' : 'Save RTQ'}
-          </button>
+          {readOnly ? (
+            <span className="rounded bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-500">
+              Read-only — historical version
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded px-4 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
+              style={{ backgroundColor: accentColor }}
+            >
+              {saving ? 'Saving…' : doc ? 'Update RTQ' : 'Save RTQ'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -609,7 +618,9 @@ export const RequestToQuoteEditor = forwardRef<RequestToQuoteEditorHandle, Reque
       <div
         ref={printRef}
         id="rtq-document"
-        className="bg-white shadow-sm border border-zinc-200 rounded-lg mx-auto print:shadow-none print:border-none print:rounded-none"
+        className={`bg-white shadow-sm border border-zinc-200 rounded-lg mx-auto print:shadow-none print:border-none print:rounded-none ${
+          readOnly ? 'pointer-events-none' : ''
+        }`}
         style={{ maxWidth: 900 }}
       >
         {/* Accent stripe */}

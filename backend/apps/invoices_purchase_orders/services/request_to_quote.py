@@ -7,7 +7,7 @@ from services import db
 from services.base_service import ServiceError
 
 ORDER_TYPES = {"raw_material", "label", "product", "bottles_lids", "custom"}
-STATUSES = {"draft", "sent", "received", "canceled"}
+STATUSES = {"draft", "sent", "received", "canceled", "moved_to_po"}
 
 
 class RequestToQuoteService:
@@ -56,6 +56,7 @@ class RequestToQuoteService:
         return {
             "id": doc_id,
             "rtqNumber": row.get("rtq_number") or "",
+            "version": int(row.get("version") or 1),
             "vendorId": str(row["vendor_id"]) if row.get("vendor_id") else None,
             "vendorName": row.get("vendor_name") or "",
             "vendorAddress": row.get("vendor_address"),
@@ -146,6 +147,24 @@ class RequestToQuoteService:
     # ------------------------------------------------------------------
 
     @classmethod
+    def _items_by_doc(cls, doc_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        items_by_doc: dict[str, list[dict[str, Any]]] = {doc_id: [] for doc_id in doc_ids}
+        if not doc_ids:
+            return items_by_doc
+        all_items = db.data(
+            db.execute(
+                db.client()
+                .table(cls.ITEMS_TABLE)
+                .select("*")
+                .in_("request_to_quote_document_id", doc_ids)
+                .order("sr")
+            )
+        )
+        for item in all_items:
+            items_by_doc.setdefault(str(item["request_to_quote_document_id"]), []).append(item)
+        return items_by_doc
+
+    @classmethod
     def list(
         cls,
         *,
@@ -154,29 +173,37 @@ class RequestToQuoteService:
         order_by: str = "created_at",
         limit: int = 200,
     ) -> list[dict[str, Any]]:
+        # Every save appends a new version under the same rtq_number rather
+        # than editing in place, so the list view collapses each rtq_number
+        # down to just its latest (highest-version) row.
         query = db.client().table(cls.TABLE).select("*")
         for key, value in (filters or {}).items():
             if value not in (None, ""):
                 query = query.eq(key, value)
-        query = query.order("created_at", desc=True).limit(max(1, min(int(limit or 200), 1000)))
+        query = query.order("version", desc=True)
         rows = db.data(db.execute(query))
 
-        doc_ids = [str(row["id"]) for row in rows]
-        items_by_doc: dict[str, list[dict[str, Any]]] = {doc_id: [] for doc_id in doc_ids}
-        if doc_ids:
-            all_items = db.data(
-                db.execute(
-                    db.client()
-                    .table(cls.ITEMS_TABLE)
-                    .select("*")
-                    .in_("request_to_quote_document_id", doc_ids)
-                    .order("sr")
-                )
-            )
-            for item in all_items:
-                items_by_doc.setdefault(str(item["request_to_quote_document_id"]), []).append(item)
+        latest_by_number: dict[str, dict[str, Any]] = {}
+        count_by_number: dict[str, int] = {}
+        for row in rows:
+            number = row.get("rtq_number") or ""
+            count_by_number[number] = count_by_number.get(number, 0) + 1
+            if number not in latest_by_number:
+                latest_by_number[number] = row  # rows are ordered by version desc
 
-        return [cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), [])) for row in rows]
+        latest_rows = sorted(
+            latest_by_number.values(), key=lambda r: r.get("created_at") or "", reverse=True
+        )[: max(1, min(int(limit or 200), 1000))]
+
+        items_by_doc = cls._items_by_doc([str(row["id"]) for row in latest_rows])
+
+        result = []
+        for row in latest_rows:
+            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []))
+            doc["versionCount"] = count_by_number.get(row.get("rtq_number") or "", 1)
+            doc["isLatest"] = True
+            result.append(doc)
+        return result
 
     @classmethod
     def get(cls, item_id: str) -> dict[str, Any]:
@@ -189,8 +216,40 @@ class RequestToQuoteService:
         return cls._db_to_app(row)
 
     @classmethod
+    def history(cls, item_id: str) -> list[dict[str, Any]]:
+        anchor = db.require_row(
+            db.one(
+                db.execute(db.client().table(cls.TABLE).select("rtq_number").eq("id", item_id).limit(1))
+            ),
+            "Request to quote not found",
+        )
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table(cls.TABLE)
+                .select("*")
+                .eq("rtq_number", anchor["rtq_number"])
+                .order("version", desc=True)
+            )
+        )
+        items_by_doc = cls._items_by_doc([str(row["id"]) for row in rows])
+        max_version = max((int(row.get("version") or 1) for row in rows), default=1)
+
+        result = []
+        for row in rows:
+            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []))
+            doc["isLatest"] = int(row.get("version") or 1) == max_version
+            result.append(doc)
+        return result
+
+    @classmethod
     def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
         header = cls._clean_header(payload)
+        if not header.get("brand_id"):
+            raise ServiceError(
+                "Select a brand before saving a Request to Quote — its RTQ number depends on the brand.",
+                400,
+            )
         items = cls._clean_items(payload.get("items"))
         header["subtotal"] = db.decimal_str(cls._compute_subtotal(items))
 
@@ -205,39 +264,166 @@ class RequestToQuoteService:
 
     @classmethod
     def update(cls, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        db.require_row(
+        # "Update" never edits a row in place - it appends a new version
+        # under the same rtq_number, so every prior save stays intact.
+        existing = db.require_row(
             db.one(
                 db.execute(db.client().table(cls.TABLE).select("*").eq("id", item_id).limit(1))
             ),
             "Request to quote not found",
         )
-        header = cls._clean_header(payload, partial=True)
+        rtq_number = existing.get("rtq_number")
+        current_version = int(existing.get("version") or 1)
 
-        items = cls._clean_items(payload.get("items")) if "items" in payload else None
-        if items is not None:
-            header["subtotal"] = db.decimal_str(cls._compute_subtotal(items))
-
-        if header:
-            db.execute(db.client().table(cls.TABLE).update(header).eq("id", item_id))
-
-        if items is not None:
+        latest = db.one(
             db.execute(
-                db.client().table(cls.ITEMS_TABLE).delete().eq("request_to_quote_document_id", item_id)
+                db.client()
+                .table(cls.TABLE)
+                .select("id,version")
+                .eq("rtq_number", rtq_number)
+                .order("version", desc=True)
+                .limit(1)
             )
-            cls._insert_items(item_id, items)
+        )
+        if latest and str(latest.get("id")) != str(existing["id"]):
+            raise ServiceError(
+                "This is not the latest version of this Request to Quote. "
+                "Refresh and edit the latest version instead.",
+                409,
+            )
 
-        return cls.get(item_id)
+        header = cls._clean_header(payload, partial=True)
+        merged = {**existing, **header}
+
+        if "items" in payload:
+            items = cls._clean_items(payload.get("items"))
+        else:
+            # Every version is a full snapshot - carry the previous
+            # version's items forward unchanged if none were supplied.
+            items = [
+                {
+                    "sr": item["sr"],
+                    "order_type": item["order_type"],
+                    "item_id": item.get("item_id"),
+                    "item_name": item.get("item_name") or "",
+                    "quantity": db.as_decimal(item.get("quantity")),
+                    "unit_price": (
+                        db.as_decimal(item["unit_price"]) if item.get("unit_price") is not None else None
+                    ),
+                    "total_price": (
+                        db.as_decimal(item["total_price"]) if item.get("total_price") is not None else None
+                    ),
+                }
+                for item in cls._item_rows(str(existing["id"]))
+            ]
+
+        new_header = {
+            "rtq_number": rtq_number,
+            "version": current_version + 1,
+            "vendor_id": merged.get("vendor_id"),
+            "vendor_name": merged.get("vendor_name") or "",
+            "vendor_address": merged.get("vendor_address"),
+            "ship_to_name": merged.get("ship_to_name") or "",
+            "ship_to_address": merged.get("ship_to_address"),
+            "ship_to_phone": merged.get("ship_to_phone"),
+            "brand_id": merged.get("brand_id"),
+            "rtq_date": merged.get("rtq_date"),
+            "terms_conditions": merged.get("terms_conditions"),
+            "status": merged.get("status") or "draft",
+            "subtotal": db.decimal_str(cls._compute_subtotal(items)),
+        }
+
+        created = db.require_row(
+            db.one(db.execute(db.client().table(cls.TABLE).insert(new_header))),
+            "Request to quote version was not saved",
+            500,
+        )
+        new_id = str(created["id"])
+        cls._insert_items(new_id, items)
+        return cls.get(new_id)
 
     @classmethod
     def delete(cls, item_id: str) -> None:
-        db.require_row(
+        # Deleting any version removes the whole rtq_number - all versions
+        # together, not just the one that was clicked.
+        existing = db.require_row(
             db.one(
-                db.execute(db.client().table(cls.TABLE).select("id").eq("id", item_id).limit(1))
+                db.execute(db.client().table(cls.TABLE).select("rtq_number").eq("id", item_id).limit(1))
             ),
             "Request to quote not found",
         )
-        db.execute(db.client().table(cls.TABLE).delete().eq("id", item_id))
+        db.execute(db.client().table(cls.TABLE).delete().eq("rtq_number", existing["rtq_number"]))
         return None
+
+    @classmethod
+    def approve(cls, item_id: str) -> dict[str, Any]:
+        """Convert the latest version of this Request to Quote into a new
+        Purchase Order, carrying over vendor/brand/ship-to/items/terms.
+        Whatever unit prices the vendor already quoted come along too; the
+        rest is left for the user to fill in on the new PO. Marks this RTQ
+        'moved_to_po' so it's clear it was already converted.
+        """
+        # Imported locally to avoid a module-level circular import between
+        # the two services in this app.
+        from apps.invoices_purchase_orders.services.po_documents import PODocumentService
+
+        doc = db.require_row(
+            db.one(
+                db.execute(db.client().table(cls.TABLE).select("*").eq("id", item_id).limit(1))
+            ),
+            "Request to quote not found",
+        )
+        if doc.get("status") == "moved_to_po":
+            raise ServiceError(
+                "This request to quote has already been moved to a purchase order.", 409
+            )
+
+        latest = db.one(
+            db.execute(
+                db.client()
+                .table(cls.TABLE)
+                .select("id")
+                .eq("rtq_number", doc["rtq_number"])
+                .order("version", desc=True)
+                .limit(1)
+            )
+        )
+        if latest and str(latest.get("id")) != str(doc["id"]):
+            raise ServiceError("Only the latest version can be approved.", 409)
+
+        items = cls._item_rows(str(doc["id"]))
+        po_payload = {
+            "vendorId": str(doc["vendor_id"]) if doc.get("vendor_id") else None,
+            "vendorName": doc.get("vendor_name") or "",
+            "vendorAddress": doc.get("vendor_address"),
+            "shipToName": doc.get("ship_to_name") or "",
+            "shipToAddress": doc.get("ship_to_address"),
+            "shipToPhone": doc.get("ship_to_phone"),
+            "brandId": str(doc["brand_id"]) if doc.get("brand_id") else None,
+            "poDate": doc.get("rtq_date"),
+            "termsConditions": doc.get("terms_conditions"),
+            "items": [
+                {
+                    "orderType": item.get("order_type") or "raw_material",
+                    "itemId": str(item["item_id"]) if item.get("item_id") else None,
+                    "itemName": item.get("item_name") or "",
+                    "quantity": db.as_float(item.get("quantity")),
+                    "unitPrice": (
+                        db.as_float(item.get("unit_price")) if item.get("unit_price") is not None else None
+                    ),
+                    "totalPrice": (
+                        db.as_float(item.get("total_price")) if item.get("total_price") is not None else None
+                    ),
+                }
+                for item in items
+            ],
+        }
+        po = PODocumentService.create(po_payload)
+
+        db.execute(
+            db.client().table(cls.TABLE).update({"status": "moved_to_po"}).eq("id", item_id)
+        )
+        return po
 
     @classmethod
     def _insert_items(cls, rtq_document_id: str, items: list[dict[str, Any]]) -> None:

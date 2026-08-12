@@ -46,8 +46,11 @@ from apps.inventory.views import (
 )
 from apps.invoices_purchase_orders.views import (
     PODocumentDetailView,
+    PODocumentHistoryView,
     PODocumentListCreateView,
+    RequestToQuoteApproveView,
     RequestToQuoteDetailView,
+    RequestToQuoteHistoryView,
     RequestToQuoteListCreateView,
     SentItemDetailView,
     SentItemListCreateView,
@@ -303,7 +306,11 @@ urlpatterns = [
         PODocumentDetailView.as_view(),
         name="po-document-detail",
     ),
-
+    path(
+        "api/po-documents/<uuid:item_id>/history/",
+        PODocumentHistoryView.as_view(),
+        name="po-document-history",
+    ),
     # -------------------------------------------------------------------------
     # Request to Quote document endpoints
     # -------------------------------------------------------------------------
@@ -316,5 +323,15 @@ urlpatterns = [
         "api/request-to-quote-documents/<uuid:item_id>/",
         RequestToQuoteDetailView.as_view(),
         name="request-to-quote-detail",
+    ),
+    path(
+        "api/request-to-quote-documents/<uuid:item_id>/history/",
+        RequestToQuoteHistoryView.as_view(),
+        name="request-to-quote-history",
+    ),
+    path(
+        "api/request-to-quote-documents/<uuid:item_id>/approve/",
+        RequestToQuoteApproveView.as_view(),
+        name="request-to-quote-approve",
     ),
 ]

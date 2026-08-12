@@ -4,7 +4,8 @@
 
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   PODocumentEditor,
   type PODocumentEditorHandle,
@@ -31,6 +32,7 @@ import {
   deletePODocument,
   fetchBrands,
   fetchLabelInventory,
+  fetchPODocumentHistory,
   fetchPODocuments,
   fetchProducts,
   fetchRawMaterials,
@@ -57,11 +59,12 @@ const STATUS_LABELS: Record<PODocumentStatus, string> = {
   sent: 'Sent',
   received: 'Received',
   canceled: 'Canceled',
+  approved: 'Approved',
 }
 
 function statusVariant(s: PODocumentStatus): 'default' | 'info' | 'success' | 'error' {
   if (s === 'sent') return 'info'
-  if (s === 'received') return 'success'
+  if (s === 'received' || s === 'approved') return 'success'
   if (s === 'canceled') return 'error'
   return 'default'
 }
@@ -90,15 +93,32 @@ export default function PurchaseOrdersPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [vendorFilter, setVendorFilter] = useState('')
   const [editingDoc, setEditingDoc] = useState<PODocument | null | 'new'>(null)
+  const [editingReadOnly, setEditingReadOnly] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<PODocument | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
 
+  // ── Version history (expand/collapse per PO number) ──────────────────────────
+  const [expandedNumbers, setExpandedNumbers] = useState<Set<string>>(new Set())
+  const [historyByNumber, setHistoryByNumber] = useState<Record<string, PODocument[]>>({})
+  const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({})
+
   const printRef = useRef<HTMLDivElement>(null!)
   const editorRef = useRef<PODocumentEditorHandle>(null)
   const { showToast } = useToast()
+  const location = useLocation()
 
   useEffect(() => { void loadData() }, [])
+
+  useEffect(() => {
+    const openDoc = (location.state as { openDoc?: PODocument } | null)?.openDoc
+    if (openDoc) {
+      setEditingReadOnly(false)
+      setEditingDoc(openDoc)
+      window.history.replaceState({}, '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function loadData() {
     try {
@@ -131,8 +151,19 @@ export default function PurchaseOrdersPage() {
     try {
       setSaving(true)
       const saved = await savePODocument(input)
-      showToast({ message: input.id ? 'PO document updated' : `PO ${saved.poNumber} created`, type: 'success' })
+      showToast({
+        message: input.id ? `${saved.poNumber} — new version saved (v${saved.version})` : `PO ${saved.poNumber} created`,
+        type: 'success',
+      })
       setEditingDoc(saved)
+      setEditingReadOnly(false)
+      // The cached history for this PO number is now stale (missing the
+      // version we just saved) - clear it so re-expanding refetches.
+      setHistoryByNumber(prev => {
+        const next = { ...prev }
+        delete next[saved.poNumber]
+        return next
+      })
       await loadData()
     } catch (err) {
       console.error('Failed to save PO document:', err)
@@ -147,9 +178,19 @@ export default function PurchaseOrdersPage() {
     try {
       setDeleting(true)
       await deletePODocument(deleteTarget.id)
-      setDocs(prev => prev.filter(d => d.id !== deleteTarget.id))
+      setDocs(prev => prev.filter(d => d.poNumber !== deleteTarget.poNumber))
+      setHistoryByNumber(prev => {
+        const next = { ...prev }
+        delete next[deleteTarget.poNumber]
+        return next
+      })
+      setExpandedNumbers(prev => {
+        const next = new Set(prev)
+        next.delete(deleteTarget.poNumber)
+        return next
+      })
       setDeleteTarget(null)
-      if (editingDoc && editingDoc !== 'new' && editingDoc.id === deleteTarget.id) {
+      if (editingDoc && editingDoc !== 'new' && editingDoc.poNumber === deleteTarget.poNumber) {
         setEditingDoc(null)
       }
       showToast({ message: 'PO document deleted', type: 'success' })
@@ -158,6 +199,37 @@ export default function PurchaseOrdersPage() {
       showToast({ message: 'Failed to delete', type: 'error' })
     } finally {
       setDeleting(false)
+    }
+  }
+
+  // ── Version history ───────────────────────────────────────────────────────
+
+  function openVersion(doc: PODocument, readOnly: boolean) {
+    setEditingReadOnly(readOnly)
+    setEditingDoc(doc)
+  }
+
+  async function toggleExpand(doc: PODocument) {
+    const number = doc.poNumber
+    setExpandedNumbers(prev => {
+      const next = new Set(prev)
+      if (next.has(number)) {
+        next.delete(number)
+      } else {
+        next.add(number)
+      }
+      return next
+    })
+    if (historyByNumber[number] || historyLoading[number]) return
+    setHistoryLoading(prev => ({ ...prev, [number]: true }))
+    try {
+      const rows = await fetchPODocumentHistory(doc.id)
+      setHistoryByNumber(prev => ({ ...prev, [number]: rows }))
+    } catch (err) {
+      console.error('Failed to load Purchase Order history:', err)
+      showToast({ message: 'Failed to load version history', type: 'error' })
+    } finally {
+      setHistoryLoading(prev => ({ ...prev, [number]: false }))
     }
   }
 
@@ -411,14 +483,8 @@ export default function PurchaseOrdersPage() {
         label: `GST${data.gstPercent ? ` (${data.gstPercent}%)` : ''}`,
         value: `$${((data.subtotal * data.gstPercent) / 100).toFixed(2)}`,
       },
-      {
-        label: `OTHER${data.othersPercent ? ` (${data.othersPercent}%)` : ''}`,
-        value: `$${((data.subtotal * data.othersPercent) / 100).toFixed(2)}`,
-      },
-      {
-        label: `SHIPPING${data.shippingPercent ? ` (${data.shippingPercent}%)` : ''}`,
-        value: `$${((data.subtotal * data.shippingPercent) / 100).toFixed(2)}`,
-      },
+      { label: 'OTHER', value: `$${data.othersValue.toFixed(2)}` },
+      { label: 'SHIPPING', value: `$${data.shippingValue.toFixed(2)}` },
     ]
     let ty = boxTop
     summaryRows.forEach((row, index) => {
@@ -508,14 +574,14 @@ export default function PurchaseOrdersPage() {
         <button
           type="button"
           className={viewButtonClass(editingDoc === null)}
-          onClick={() => setEditingDoc(null)}
+          onClick={() => { setEditingDoc(null); setEditingReadOnly(false) }}
         >
           Purchase Orders
         </button>
         <button
           type="button"
           className={viewButtonClass(editingDoc !== null)}
-          onClick={() => setEditingDoc('new')}
+          onClick={() => { setEditingDoc('new'); setEditingReadOnly(false) }}
         >
           Create Purchase Order
         </button>
@@ -526,7 +592,11 @@ export default function PurchaseOrdersPage() {
           {/* PDF / Print toolbar — hidden on print */}
           <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
             <h2 className="text-lg font-semibold">
-              {docObj ? `Edit — ${docObj.poNumber}` : 'New Purchase Order'}
+              {docObj
+                ? editingReadOnly
+                  ? `Viewing — ${docObj.poNumber} (v${docObj.version}, read-only)`
+                  : `Edit — ${docObj.poNumber}`
+                : 'New Purchase Order'}
             </h2>
             <div className="flex gap-2">
               <button
@@ -562,9 +632,10 @@ export default function PurchaseOrdersPage() {
             products={products}
             labels={labels}
             saving={saving}
+            readOnly={editingReadOnly}
             onSave={handleSave}
-            onDelete={docObj ? () => setDeleteTarget(docObj) : undefined}
-            onBack={() => setEditingDoc(null)}
+            onDelete={docObj && !editingReadOnly ? () => setDeleteTarget(docObj) : undefined}
+            onBack={() => { setEditingDoc(null); setEditingReadOnly(false) }}
             printRef={printRef}
           />
         </div>
@@ -598,58 +669,113 @@ export default function PurchaseOrdersPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>PO Number</TableHead>
-                <TableHead>Date</TableHead>
+                <TableHead>Brand</TableHead>
                 <TableHead>Vendor</TableHead>
-                <TableHead>Items</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableLoading colSpan={8} />
+                <TableLoading colSpan={4} />
               ) : filteredDocs.length === 0 ? (
-                <TableEmpty colSpan={8} message="No purchase orders yet." />
+                <TableEmpty colSpan={4} message="No purchase orders yet." />
               ) : (
                 filteredDocs.map(doc => {
+                  const expanded = expandedNumbers.has(doc.poNumber)
+                  const brandName = brands.find(b => b.id === doc.brandId)?.name
                   return (
-                    <TableRow key={doc.id} clickable onClick={() => setEditingDoc(doc)}>
-                      <TableCell className="font-mono font-semibold">{doc.poNumber}</TableCell>
-                      <TableCell>{doc.poDate}</TableCell>
-                      <TableCell>{doc.vendorName || '—'}</TableCell>
-                      <TableCell>{doc.items.length}</TableCell>
-                      <TableCell>${doc.grandTotal.toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(doc.status)}>{STATUS_LABELS[doc.status]}</Badge>
-                      </TableCell>
-                      <TableCell>{formatDate(doc.createdAt)}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="subtle"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setEditingDoc(doc)
-                            }}
+                    <Fragment key={doc.id}>
+                      <TableRow clickable onClick={() => void toggleExpand(doc)}>
+                        <TableCell className="font-mono font-semibold">{doc.poNumber}</TableCell>
+                        <TableCell>{brandName || '—'}</TableCell>
+                        <TableCell>{doc.vendorName || '—'}</TableCell>
+                        <TableCell>
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className={`h-4 w-4 text-zinc-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
                           >
-                            Edit
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setDeleteTarget(doc)
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                          </svg>
+                        </TableCell>
+                      </TableRow>
+
+                      {expanded && (
+                        <TableRow>
+                          <TableCell colSpan={4} className="bg-zinc-50 p-0">
+                            {historyLoading[doc.poNumber] ? (
+                              <div className="p-4 text-center text-sm text-zinc-400">Loading version history…</div>
+                            ) : (
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>PO Number</TableHead>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Vendor</TableHead>
+                                    <TableHead>Items</TableHead>
+                                    <TableHead>Total</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Created</TableHead>
+                                    <TableHead>Actions</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {(historyByNumber[doc.poNumber] ?? []).map(version => (
+                                    <TableRow
+                                      key={version.id}
+                                      clickable
+                                      onClick={() => openVersion(version, !version.isLatest)}
+                                    >
+                                      <TableCell className="font-mono font-semibold">
+                                        {version.poNumber}
+                                        {version.isLatest && (
+                                          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                            Latest
+                                          </span>
+                                        )}
+                                      </TableCell>
+                                      <TableCell>{version.poDate}</TableCell>
+                                      <TableCell>{version.vendorName || '—'}</TableCell>
+                                      <TableCell>{version.items.length}</TableCell>
+                                      <TableCell>${version.grandTotal.toFixed(2)}</TableCell>
+                                      <TableCell>
+                                        <Badge variant={statusVariant(version.status)}>{STATUS_LABELS[version.status]}</Badge>
+                                      </TableCell>
+                                      <TableCell>{formatDate(version.createdAt)}</TableCell>
+                                      <TableCell>
+                                        <div className="flex gap-2">
+                                          <Button
+                                            variant="subtle"
+                                            size="sm"
+                                            onClick={(event) => {
+                                              event.stopPropagation()
+                                              openVersion(version, !version.isLatest)
+                                            }}
+                                          >
+                                            {version.isLatest ? 'Edit' : 'View'}
+                                          </Button>
+                                          <Button
+                                            variant="danger"
+                                            size="sm"
+                                            onClick={(event) => {
+                                              event.stopPropagation()
+                                              setDeleteTarget(version)
+                                            }}
+                                          >
+                                            Delete
+                                          </Button>
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
                   )
                 })
               )}
@@ -668,6 +794,7 @@ export default function PurchaseOrdersPage() {
         variant="danger"
         loading={deleting}
       />
+
     </div>
   )
 }

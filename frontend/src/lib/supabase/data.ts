@@ -584,6 +584,10 @@ export async function fetchPODocument(id: string): Promise<PODocument | null> {
   return unwrap(await api.get<Data<PODocument>>(`/po-documents/${id}`))
 }
 
+export async function fetchPODocumentHistory(id: string): Promise<PODocument[]> {
+  return unwrap(await api.get<Data<PODocument[]>>(`/po-documents/${id}/history`))
+}
+
 export async function savePODocument(input: CreatePODocumentInput): Promise<PODocument> {
   const { id, poNumber, ...payload } = input
 
@@ -611,6 +615,14 @@ export async function fetchRequestToQuoteDocuments(options?: {
 
 export async function fetchRequestToQuoteDocument(id: string): Promise<RequestToQuoteDocument | null> {
   return unwrap(await api.get<Data<RequestToQuoteDocument>>(`/request-to-quote-documents/${id}`))
+}
+
+export async function fetchRequestToQuoteHistory(id: string): Promise<RequestToQuoteDocument[]> {
+  return unwrap(await api.get<Data<RequestToQuoteDocument[]>>(`/request-to-quote-documents/${id}/history`))
+}
+
+export async function approveRequestToQuoteDocument(id: string): Promise<PODocument> {
+  return unwrap(await api.post<Data<PODocument>>(`/request-to-quote-documents/${id}/approve`, {}))
 }
 
 export async function saveRequestToQuoteDocument(

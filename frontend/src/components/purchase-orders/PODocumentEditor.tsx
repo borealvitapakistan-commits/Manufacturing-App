@@ -351,6 +351,7 @@ export interface PODocumentEditorProps {
   products: Product[]
   labels: LabelInventory[]
   saving: boolean
+  readOnly?: boolean
   onSave: (input: CreatePODocumentInput) => Promise<void>
   onDelete?: () => void
   onBack: () => void
@@ -370,8 +371,8 @@ export interface PODocumentPrintData {
   termsConditions: string
   subtotal: number
   gstPercent: number
-  othersPercent: number
-  shippingPercent: number
+  othersValue: number
+  shippingValue: number
   grandTotal: number
   items: Array<{
     sr: number
@@ -408,6 +409,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   products,
   labels,
   saving,
+  readOnly = false,
   onSave,
   onDelete,
   onBack,
@@ -440,8 +442,8 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     doc?.items.length ? doc.items : [emptyItem(1)]
   )
   const [gstPercent, setGstPercent] = useState(doc?.gstPercent ?? 0)
-  const [othersPercent, setOthersPercent] = useState(doc?.othersPercent ?? 0)
-  const [shippingPercent, setShippingPercent] = useState(doc?.shippingPercent ?? 0)
+  const [othersValue, setOthersValue] = useState(doc?.othersValue ?? 0)
+  const [shippingValue, setShippingValue] = useState(doc?.shippingValue ?? 0)
 
   // Derived vendor / brand info
   const selectedVendor = vendors.find(v => v.id === vendorId)
@@ -487,8 +489,9 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     const t = item.totalPrice ?? (item.quantity != null && item.unitPrice != null ? item.quantity * item.unitPrice : 0)
     return sum + (t || 0)
   }, 0)
-  const percentTotal = (gstPercent || 0) + (othersPercent || 0) + (shippingPercent || 0)
-  const grandTotal = subtotal + (subtotal * percentTotal) / 100
+  // GST is a percentage of the subtotal; Others and Shipping are flat
+  // dollar amounts added directly (e.g. subtotal 40 + shipping 90 = 130).
+  const grandTotal = subtotal + (subtotal * (gstPercent || 0)) / 100 + (othersValue || 0) + (shippingValue || 0)
 
   useImperativeHandle(ref, () => ({
     getPrintData: () => ({
@@ -504,8 +507,8 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       termsConditions,
       subtotal,
       gstPercent,
-      othersPercent,
-      shippingPercent,
+      othersValue,
+      shippingValue,
       grandTotal,
       items: items.map((item, idx) => {
         const totalPrice = item.totalPrice ?? (item.quantity != null && item.unitPrice != null ? item.quantity * item.unitPrice : 0)
@@ -525,10 +528,10 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     gstPercent,
     grandTotal,
     items,
-    othersPercent,
+    othersValue,
     poDate,
     selectedVendor?.name,
-    shippingPercent,
+    shippingValue,
     shipToAddress,
     shipToName,
     shipToPhone,
@@ -551,8 +554,8 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       termsConditions: termsConditions || null,
       status: doc?.status ?? 'draft',
       gstPercent,
-      othersPercent,
-      shippingPercent,
+      othersValue,
+      shippingValue,
       items: items.map((item, idx) => ({
         id: item.id?.startsWith('new-') ? undefined : item.id,
         sr: idx + 1,
@@ -564,7 +567,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
         totalPrice: item.totalPrice ?? null,
       })),
     })
-  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, gstPercent, othersPercent, shippingPercent, items, onSave])
+  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, gstPercent, othersValue, shippingValue, items, onSave])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -586,11 +589,12 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {/* Brand selector */}
           <div className="flex items-center gap-2">
-            <label className="text-sm text-zinc-600">PO brand:</label>
+            <label className="text-sm text-zinc-600">PO brand: *</label>
             <select
               value={brandId}
               onChange={e => handleBrandChange(e.target.value)}
-              className="rounded border border-zinc-300 px-2 py-1 text-sm"
+              disabled={readOnly}
+              className="rounded border border-zinc-300 px-2 py-1 text-sm disabled:bg-zinc-100 disabled:text-zinc-500"
             >
               <option value="">— none —</option>
               {brands.map(b => (
@@ -602,24 +606,40 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
             )}
           </div>
 
-          {onDelete && (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="rounded border border-rose-300 bg-rose-50 px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-100 transition-colors"
-            >
-              Delete
-            </button>
+          {readOnly ? (
+            <span className="rounded bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-500">
+              {doc?.status === 'approved' ? 'Approved — read-only' : 'Read-only — historical version'}
+            </span>
+          ) : (
+            <>
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="rounded border border-rose-300 bg-rose-50 px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-100 transition-colors"
+                >
+                  Delete
+                </button>
+              )}
+              {doc && (
+                <button
+                  type="button"
+                  className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 transition-colors"
+                >
+                  Sent
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="rounded px-4 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                style={{ backgroundColor: accentColor }}
+              >
+                {saving ? 'Saving…' : doc ? 'Update PO' : 'Save PO'}
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="rounded px-4 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
-            style={{ backgroundColor: accentColor }}
-          >
-            {saving ? 'Saving…' : doc ? 'Update PO' : 'Save PO'}
-          </button>
         </div>
       </div>
 
@@ -627,7 +647,9 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       <div
         ref={printRef}
         id="po-document"
-        className="bg-white shadow-sm border border-zinc-200 rounded-lg mx-auto print:shadow-none print:border-none print:rounded-none"
+        className={`bg-white shadow-sm border border-zinc-200 rounded-lg mx-auto print:shadow-none print:border-none print:rounded-none ${
+          readOnly ? 'pointer-events-none' : ''
+        }`}
         style={{ maxWidth: 900 }}
       >
         {/* Accent stripe */}
@@ -800,26 +822,26 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
                 />
               </div>
               <div className="mt-2 flex items-center justify-between gap-8">
-                <label className="text-sm text-zinc-500">Others %</label>
+                <label className="text-sm text-zinc-500">Others ($)</label>
                 <input
                   type="number"
                   min="0"
                   step="0.01"
-                  value={othersPercent === 0 ? '' : othersPercent}
-                  onChange={e => setOthersPercent(parseFloat(e.target.value) || 0)}
+                  value={othersValue === 0 ? '' : othersValue}
+                  onChange={e => setOthersValue(parseFloat(e.target.value) || 0)}
                   className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
                   style={{ borderColor: accentColor }}
                   placeholder="0"
                 />
               </div>
               <div className="mt-2 flex items-center justify-between gap-8">
-                <label className="text-sm text-zinc-500">Shipping %</label>
+                <label className="text-sm text-zinc-500">Shipping ($)</label>
                 <input
                   type="number"
                   min="0"
                   step="0.01"
-                  value={shippingPercent === 0 ? '' : shippingPercent}
-                  onChange={e => setShippingPercent(parseFloat(e.target.value) || 0)}
+                  value={shippingValue === 0 ? '' : shippingValue}
+                  onChange={e => setShippingValue(parseFloat(e.target.value) || 0)}
                   className="w-20 text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-0.5"
                   style={{ borderColor: accentColor }}
                   placeholder="0"

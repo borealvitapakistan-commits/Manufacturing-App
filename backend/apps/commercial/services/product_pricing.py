@@ -148,6 +148,7 @@ class ProductPricingService:
                 "Raw-material price",
             )
             cost = required_kg * price_per_kg
+            qty_in_stock_kg = float((material or {}).get("qtyKg") or 0)
             lines.append(
                 {
                     "sr": index + 1,
@@ -162,6 +163,7 @@ class ProductPricingService:
                     "requiredKg": round(required_kg, 6),
                     "pricePerKg": round(price_per_kg, 4),
                     "cost": round(cost, 4),
+                    "qtyInStockKg": round(qty_in_stock_kg, 4),
                 }
             )
         return lines

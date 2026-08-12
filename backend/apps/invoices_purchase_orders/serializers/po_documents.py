@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 ORDER_TYPES = ["raw_material", "label", "product", "bottles_lids", "custom"]
-PO_STATUSES = ["draft", "sent", "received", "canceled"]
+PO_STATUSES = ["draft", "sent", "received", "canceled", "approved"]
 
 
 class PODocumentItemSerializer(serializers.Serializer):
@@ -31,8 +31,8 @@ class PODocumentSerializer(serializers.Serializer):
     termsConditions = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     status = serializers.ChoiceField(choices=PO_STATUSES, required=False, default="draft")
     gstPercent = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=0, required=False)
-    othersPercent = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=0, required=False)
-    shippingPercent = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=0, required=False)
+    othersValue = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0, required=False)
+    shippingValue = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0, required=False)
     items = PODocumentItemSerializer(many=True, required=False, default=list)
 
 
