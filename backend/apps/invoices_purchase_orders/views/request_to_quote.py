@@ -1,4 +1,3 @@
-from rest_framework import status as http_status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -33,17 +32,8 @@ class RequestToQuoteHistoryView(APIView):
         return Response({"data": RequestToQuoteService.history(str(item_id))})
 
 
-class RequestToQuoteApproveView(APIView):
-    def post(self, request, item_id):
-        return Response(
-            {"data": RequestToQuoteService.approve(str(item_id))},
-            status=http_status.HTTP_201_CREATED,
-        )
-
-
 __all__ = [
     "RequestToQuoteListCreateView",
     "RequestToQuoteDetailView",
     "RequestToQuoteHistoryView",
-    "RequestToQuoteApproveView",
 ]

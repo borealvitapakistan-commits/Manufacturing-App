@@ -489,6 +489,13 @@ export interface PODocument {
   poDate: string
   termsConditions: string | null
   status: PODocumentStatus
+  rtqNumber?: string | null
+  quoteNumber?: string | null
+  paymentProofNumber?: string | null
+  paymentProofFileName?: string | null
+  paymentProofFileUrl?: string | null
+  paymentProofFileType?: string | null
+  paymentProofFileSize?: number | null
   subtotal: number
   gstPercent: number
   othersValue: number
@@ -512,6 +519,7 @@ export interface CreatePODocumentInput {
   poDate?: string
   termsConditions?: string | null
   status?: PODocumentStatus
+  rtqNumber?: string | null
   gstPercent?: number
   othersValue?: number
   shippingValue?: number
@@ -591,4 +599,46 @@ export interface CreateRequestToQuoteInput {
     unitPrice?: number | null
     totalPrice?: number | null
   }>
+}
+
+// Quote and Invoice: the two steps between Request to Quote and (end),
+// deliberately minimal - a brand-prefixed code, one attached file (the
+// vendor's actual quote/invoice document), and free-text comments. One
+// Quote per Request to Quote, one Invoice per Purchase Order.
+export interface Quote {
+  id: string
+  quoteNumber: string
+  rtqNumber: string
+  brandId: string | null
+  fileName: string | null
+  fileUrl: string | null
+  fileType: string | null
+  fileSize: number | null
+  comments: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateQuoteInput {
+  rtqNumber?: string
+  comments?: string | null
+}
+
+export interface Invoice {
+  id: string
+  invoiceNumber: string
+  poNumber: string
+  brandId: string | null
+  fileName: string | null
+  fileUrl: string | null
+  fileType: string | null
+  fileSize: number | null
+  comments: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateInvoiceInput {
+  poNumber?: string
+  comments?: string | null
 }

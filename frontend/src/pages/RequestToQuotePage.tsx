@@ -7,7 +7,6 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   RequestToQuoteEditor,
   type RequestToQuoteEditorHandle,
@@ -31,7 +30,6 @@ import {
   useToast,
 } from '@/components/ui'
 import {
-  approveRequestToQuoteDocument,
   deleteRequestToQuoteDocument,
   fetchBrands,
   fetchLabelInventory,
@@ -99,8 +97,6 @@ export default function RequestToQuotePage() {
   const [editingReadOnly, setEditingReadOnly] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<RequestToQuoteDocument | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [approveTarget, setApproveTarget] = useState<RequestToQuoteDocument | null>(null)
-  const [approving, setApproving] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
 
   // ── Version history (expand/collapse per RTQ number) ────────────────────────
@@ -111,7 +107,6 @@ export default function RequestToQuotePage() {
   const printRef = useRef<HTMLDivElement>(null!)
   const editorRef = useRef<RequestToQuoteEditorHandle>(null)
   const { showToast } = useToast()
-  const navigate = useNavigate()
 
   useEffect(() => { void loadData() }, [])
 
@@ -194,28 +189,6 @@ export default function RequestToQuotePage() {
       showToast({ message: 'Failed to delete', type: 'error' })
     } finally {
       setDeleting(false)
-    }
-  }
-
-  async function handleApprove() {
-    if (!approveTarget) return
-    try {
-      setApproving(true)
-      const po = await approveRequestToQuoteDocument(approveTarget.id)
-      showToast({ message: `Moved to Purchase Order ${po.poNumber}`, type: 'success' })
-      setApproveTarget(null)
-      setHistoryByNumber(prev => {
-        const next = { ...prev }
-        delete next[approveTarget.rtqNumber]
-        return next
-      })
-      await loadData()
-      navigate('/purchase-orders', { state: { openDoc: po } })
-    } catch (err) {
-      console.error('Failed to approve Request to Quote document:', err)
-      showToast({ message: err instanceof Error ? err.message : 'Failed to approve', type: 'error' })
-    } finally {
-      setApproving(false)
     }
   }
 
@@ -739,18 +712,6 @@ export default function RequestToQuotePage() {
                                           >
                                             {version.isLatest ? 'Edit' : 'View'}
                                           </Button>
-                                          {version.isLatest && version.status !== 'moved_to_po' && (
-                                            <Button
-                                              variant="subtle"
-                                              size="sm"
-                                              onClick={(event) => {
-                                                event.stopPropagation()
-                                                setApproveTarget(version)
-                                              }}
-                                            >
-                                              Approve
-                                            </Button>
-                                          )}
                                           <Button
                                             variant="danger"
                                             size="sm"
@@ -789,16 +750,6 @@ export default function RequestToQuotePage() {
         confirmLabel="Delete"
         variant="danger"
         loading={deleting}
-      />
-
-      <ConfirmDialog
-        open={!!approveTarget}
-        onClose={() => setApproveTarget(null)}
-        onConfirm={handleApprove}
-        title="Approve and move to Purchase Order?"
-        description={`This creates a new Purchase Order from ${approveTarget?.rtqNumber} with all its vendor, brand, and item details, and marks this Request to Quote as moved.`}
-        confirmLabel="Approve"
-        loading={approving}
       />
     </div>
   )

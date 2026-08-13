@@ -19,6 +19,8 @@ import StartManufacturingPage from '@/pages/StartManufacturingPage'
 import ItemsPurchaseOrdersPage from '@/pages/ItemsPurchaseOrdersPage'
 import PurchaseOrdersPage from '@/pages/PurchaseOrdersPage'
 import RequestToQuotePage from '@/pages/RequestToQuotePage'
+import QuotesPage from '@/pages/QuotesPage'
+import InvoicesPage from '@/pages/InvoicesPage'
 import SendItemsPage from '@/pages/SendItemsPage'
 import ProductPriceCalculatorPage from '@/pages/ProductPriceCalculatorPage'
 import MixingPage from '@/pages/manufacturing/MixingPage'
@@ -48,6 +50,8 @@ function Layout() {
           <Route path="/items-purchase-orders" element={<ItemsPurchaseOrdersPage />} />
           <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
           <Route path="/request-to-quote" element={<RequestToQuotePage />} />
+          <Route path="/quotes" element={<QuotesPage />} />
+          <Route path="/invoices" element={<InvoicesPage />} />
           <Route path="/send-items" element={<SendItemsPage />} />
           <Route path="/mixing" element={<MixingPage />} />
           <Route path="/encapsulation" element={<EncapsulationPage />} />

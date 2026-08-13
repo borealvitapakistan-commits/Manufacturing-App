@@ -71,13 +71,17 @@ export async function request<T>(
     ? window.setTimeout(() => controller.abort(), API_TIMEOUT_MS)
     : undefined
 
+  const isFormData = options.body instanceof FormData
+
   let response: Response
   try {
     response = await fetch(`${API_BASE}${normalizeEndpoint(endpoint)}`, {
       ...options,
       signal: options.signal ?? controller?.signal,
       headers: {
-        'Content-Type': 'application/json',
+        // FormData bodies must NOT set Content-Type - the browser fills in
+        // the multipart boundary itself, which a manual header would break.
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options.headers
       }
@@ -143,5 +147,9 @@ export const api = {
     request<T>(endpoint, { method: 'POST', body: JSON.stringify(body) }),
   put: <T>(endpoint: string, body: unknown) =>
     request<T>(endpoint, { method: 'PUT', body: JSON.stringify(body) }),
-  delete: <T>(endpoint: string) => request<T>(endpoint, { method: 'DELETE' })
+  delete: <T>(endpoint: string) => request<T>(endpoint, { method: 'DELETE' }),
+  postForm: <T>(endpoint: string, body: FormData) =>
+    request<T>(endpoint, { method: 'POST', body }),
+  putForm: <T>(endpoint: string, body: FormData) =>
+    request<T>(endpoint, { method: 'PUT', body })
 }

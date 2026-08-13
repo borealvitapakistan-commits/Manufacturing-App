@@ -2,13 +2,17 @@
 // Despite this legacy import path, every operation goes through Django.
 
 import type {
+  CreateInvoiceInput,
   CreatePODocumentInput,
   CreatePurchaseOrderInput,
+  CreateQuoteInput,
   CreateRequestToQuoteInput,
   FGCategory,
   FinishedGood,
+  Invoice,
   PODocument,
   PurchaseOrderType,
+  Quote,
   RequestToQuoteDocument
 } from '@/types'
 import { api, query } from '@/lib/api/client'
@@ -598,6 +602,12 @@ export async function savePODocument(input: CreatePODocumentInput): Promise<PODo
   )
 }
 
+export async function savePOPaymentProof(id: string, file: File): Promise<PODocument> {
+  const form = new FormData()
+  form.set('file', file)
+  return unwrap(await api.postForm<Data<PODocument>>(`/po-documents/${id}/payment-proof`, form))
+}
+
 export async function deletePODocument(id: string) {
   await api.delete(`/po-documents/${id}`)
 }
@@ -621,10 +631,6 @@ export async function fetchRequestToQuoteHistory(id: string): Promise<RequestToQ
   return unwrap(await api.get<Data<RequestToQuoteDocument[]>>(`/request-to-quote-documents/${id}/history`))
 }
 
-export async function approveRequestToQuoteDocument(id: string): Promise<PODocument> {
-  return unwrap(await api.post<Data<PODocument>>(`/request-to-quote-documents/${id}/approve`, {}))
-}
-
 export async function saveRequestToQuoteDocument(
   input: CreateRequestToQuoteInput
 ): Promise<RequestToQuoteDocument> {
@@ -639,6 +645,68 @@ export async function saveRequestToQuoteDocument(
 
 export async function deleteRequestToQuoteDocument(id: string) {
   await api.delete(`/request-to-quote-documents/${id}`)
+}
+
+export async function fetchQuotes(options?: { rtqNumber?: string; limit?: number }): Promise<Quote[]> {
+  return unwrap(
+    await api.get<Data<Quote[]>>(`/quotes${query({ ...options, limit: options?.limit ?? 200 })}`)
+  )
+}
+
+export async function fetchQuote(id: string): Promise<Quote | null> {
+  return unwrap(await api.get<Data<Quote>>(`/quotes/${id}`))
+}
+
+export async function saveQuote(
+  input: CreateQuoteInput & { id?: string; file?: File | null }
+): Promise<Quote> {
+  const { id, file, ...fields } = input
+  const form = new FormData()
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) form.set(key, String(value))
+  })
+  if (file) form.set('file', file)
+
+  return unwrap(
+    id
+      ? await api.putForm<Data<Quote>>(`/quotes/${id}`, form)
+      : await api.postForm<Data<Quote>>('/quotes', form)
+  )
+}
+
+export async function deleteQuote(id: string) {
+  await api.delete(`/quotes/${id}`)
+}
+
+export async function fetchInvoices(options?: { poNumber?: string; limit?: number }): Promise<Invoice[]> {
+  return unwrap(
+    await api.get<Data<Invoice[]>>(`/invoices${query({ ...options, limit: options?.limit ?? 200 })}`)
+  )
+}
+
+export async function fetchInvoice(id: string): Promise<Invoice | null> {
+  return unwrap(await api.get<Data<Invoice>>(`/invoices/${id}`))
+}
+
+export async function saveInvoice(
+  input: CreateInvoiceInput & { id?: string; file?: File | null }
+): Promise<Invoice> {
+  const { id, file, ...fields } = input
+  const form = new FormData()
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) form.set(key, String(value))
+  })
+  if (file) form.set('file', file)
+
+  return unwrap(
+    id
+      ? await api.putForm<Data<Invoice>>(`/invoices/${id}`, form)
+      : await api.postForm<Data<Invoice>>('/invoices', form)
+  )
+}
+
+export async function deleteInvoice(id: string) {
+  await api.delete(`/invoices/${id}`)
 }
 
 export async function fetchCompanySettings() {

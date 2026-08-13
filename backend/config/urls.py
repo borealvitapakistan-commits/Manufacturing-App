@@ -45,10 +45,14 @@ from apps.inventory.views import (
     SetStockView,
 )
 from apps.invoices_purchase_orders.views import (
+    InvoiceDetailView,
+    InvoiceListCreateView,
     PODocumentDetailView,
     PODocumentHistoryView,
     PODocumentListCreateView,
-    RequestToQuoteApproveView,
+    PODocumentPaymentProofView,
+    QuoteDetailView,
+    QuoteListCreateView,
     RequestToQuoteDetailView,
     RequestToQuoteHistoryView,
     RequestToQuoteListCreateView,
@@ -311,6 +315,11 @@ urlpatterns = [
         PODocumentHistoryView.as_view(),
         name="po-document-history",
     ),
+    path(
+        "api/po-documents/<uuid:item_id>/payment-proof/",
+        PODocumentPaymentProofView.as_view(),
+        name="po-document-payment-proof",
+    ),
     # -------------------------------------------------------------------------
     # Request to Quote document endpoints
     # -------------------------------------------------------------------------
@@ -329,9 +338,32 @@ urlpatterns = [
         RequestToQuoteHistoryView.as_view(),
         name="request-to-quote-history",
     ),
+
+    # -------------------------------------------------------------------------
+    # Quote endpoints
+    # -------------------------------------------------------------------------
     path(
-        "api/request-to-quote-documents/<uuid:item_id>/approve/",
-        RequestToQuoteApproveView.as_view(),
-        name="request-to-quote-approve",
+        "api/quotes/",
+        QuoteListCreateView.as_view(),
+        name="quote-list-create",
+    ),
+    path(
+        "api/quotes/<uuid:item_id>/",
+        QuoteDetailView.as_view(),
+        name="quote-detail",
+    ),
+
+    # -------------------------------------------------------------------------
+    # Invoice endpoints
+    # -------------------------------------------------------------------------
+    path(
+        "api/invoices/",
+        InvoiceListCreateView.as_view(),
+        name="invoice-list-create",
+    ),
+    path(
+        "api/invoices/<uuid:item_id>/",
+        InvoiceDetailView.as_view(),
+        name="invoice-detail",
     ),
 ]

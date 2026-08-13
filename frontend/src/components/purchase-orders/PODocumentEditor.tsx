@@ -16,6 +16,7 @@ import type {
   PODocumentItemType,
   Product,
   RawMaterial,
+  RequestToQuoteDocument,
   Vendor,
 } from '@/types'
 
@@ -350,9 +351,13 @@ export interface PODocumentEditorProps {
   rawMaterials: RawMaterial[]
   products: Product[]
   labels: LabelInventory[]
+  // Request to Quotes that already have a Quote attached and haven't been
+  // used for a Purchase Order yet - the only ones eligible to link a new PO
+  // to, each carrying its Quote's number for display.
+  eligibleRtqs: Array<RequestToQuoteDocument & { quoteNumber: string }>
   saving: boolean
   readOnly?: boolean
-  onSave: (input: CreatePODocumentInput) => Promise<void>
+  onSave: (input: CreatePODocumentInput, paymentProofFile?: File | null) => Promise<void>
   onDelete?: () => void
   onBack: () => void
   printRef: React.RefObject<HTMLDivElement>
@@ -408,6 +413,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   rawMaterials,
   products,
   labels,
+  eligibleRtqs,
   saving,
   readOnly = false,
   onSave,
@@ -444,6 +450,45 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   const [gstPercent, setGstPercent] = useState(doc?.gstPercent ?? 0)
   const [othersValue, setOthersValue] = useState(doc?.othersValue ?? 0)
   const [shippingValue, setShippingValue] = useState(doc?.shippingValue ?? 0)
+  const [linkedRtqNumber, setLinkedRtqNumber] = useState(doc?.rtqNumber ?? '')
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null)
+
+  const linkedQuoteNumber = doc?.quoteNumber
+    ?? eligibleRtqs.find(r => r.rtqNumber === linkedRtqNumber)?.quoteNumber
+    ?? ''
+
+  // Selecting a Request to Quote auto-fills vendor/brand/ship-to/items from
+  // it - the same field copy the old RTQ "Approve" flow used to do - since a
+  // Quote must already exist for that RTQ (enforced by eligibleRtqs only
+  // ever listing RTQs that already have one).
+  function handleRtqLink(nextRtqNumber: string) {
+    setLinkedRtqNumber(nextRtqNumber)
+    if (!nextRtqNumber) return
+    const rtq = eligibleRtqs.find(r => r.rtqNumber === nextRtqNumber)
+    if (!rtq) return
+    setVendorId(rtq.vendorId ?? '')
+    setVendorAddress(rtq.vendorAddress ?? '')
+    setShipToName(rtq.shipToName)
+    setShipToAddress(rtq.shipToAddress ?? '')
+    setShipToPhone(rtq.shipToPhone ?? '')
+    setBrandId(rtq.brandId ?? '')
+    setTermsConditions(rtq.termsConditions ?? '')
+    setItems(
+      rtq.items.length
+        ? rtq.items.map((item, idx) => ({
+            id: `new-${Date.now()}-${idx}`,
+            poDocumentId: '',
+            sr: idx + 1,
+            orderType: item.orderType,
+            itemId: item.itemId,
+            itemName: item.itemName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice: item.totalPrice,
+          }))
+        : [emptyItem(1)]
+    )
+  }
 
   // Derived vendor / brand info
   const selectedVendor = vendors.find(v => v.id === vendorId)
@@ -553,6 +598,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
       poDate,
       termsConditions: termsConditions || null,
       status: doc?.status ?? 'draft',
+      rtqNumber: doc?.rtqNumber ?? linkedRtqNumber ?? null,
       gstPercent,
       othersValue,
       shippingValue,
@@ -566,8 +612,8 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
         unitPrice: item.unitPrice ?? null,
         totalPrice: item.totalPrice ?? null,
       })),
-    })
-  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, gstPercent, othersValue, shippingValue, items, onSave])
+    }, paymentProofFile)
+  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, linkedRtqNumber, gstPercent, othersValue, shippingValue, items, paymentProofFile, onSave])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -688,6 +734,41 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
               </div>
             </div>
           </div>
+
+          {/* Link from Request to Quote — create-time only, hidden on print */}
+          {!doc && !readOnly && (
+            <div className="mb-4 print:hidden">
+              <label className="block text-xs font-medium text-zinc-500 mb-1">
+                Link from Request to Quote (optional)
+              </label>
+              <select
+                value={linkedRtqNumber}
+                onChange={e => handleRtqLink(e.target.value)}
+                className="w-full max-w-md rounded border border-zinc-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">— create manually —</option>
+                {eligibleRtqs.map(rtq => (
+                  <option key={rtq.id} value={rtq.rtqNumber}>
+                    {rtq.rtqNumber} — {rtq.vendorName || 'No vendor'} (Quote {rtq.quoteNumber})
+                  </option>
+                ))}
+              </select>
+              {linkedRtqNumber && (
+                <p className="mt-1 text-xs text-zinc-500">
+                  Vendor, brand, ship-to, and items filled in from {linkedRtqNumber}
+                  {linkedQuoteNumber ? ` (Quote ${linkedQuoteNumber})` : ''}.
+                </p>
+              )}
+            </div>
+          )}
+          {doc?.rtqNumber && (
+            <div className="mb-4 print:hidden text-xs text-zinc-500">
+              Linked from Request to Quote <span className="font-mono font-semibold">{doc?.rtqNumber}</span>
+              {linkedQuoteNumber ? (
+                <> · Quote <span className="font-mono font-semibold">{linkedQuoteNumber}</span></>
+              ) : null}
+            </div>
+          )}
 
           {/* Vendor selector — hidden on print, shown via vendorName */}
           <div className="mb-4 print:hidden">
@@ -853,6 +934,31 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
               </div>
             </div>
           </div>
+
+          {/* Payment Proof — UI only, hidden on print */}
+          {!readOnly && (
+            <div className="mt-6 border-t border-zinc-100 pt-4 print:hidden">
+              <p className="mb-1 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Payment Proof</p>
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.txt"
+                onChange={e => setPaymentProofFile(e.target.files?.[0] || null)}
+                className="block text-sm text-zinc-700 file:mr-3 file:rounded file:border-0 file:bg-zinc-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-zinc-700 hover:file:bg-zinc-200"
+              />
+              {doc?.paymentProofFileName && (
+                <p className="mt-1 text-xs text-zinc-500">
+                  Current file:{' '}
+                  {doc.paymentProofFileUrl ? (
+                    <a href={doc.paymentProofFileUrl} target="_blank" rel="noopener noreferrer" className="text-[#1D838D] underline">
+                      {doc.paymentProofFileName}
+                    </a>
+                  ) : (
+                    doc.paymentProofFileName
+                  )}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Bottom accent stripe */}

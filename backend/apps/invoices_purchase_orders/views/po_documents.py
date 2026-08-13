@@ -1,3 +1,4 @@
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -32,4 +33,17 @@ class PODocumentHistoryView(APIView):
         return Response({"data": PODocumentService.history(str(item_id))})
 
 
-__all__ = ["PODocumentListCreateView", "PODocumentDetailView", "PODocumentHistoryView"]
+class PODocumentPaymentProofView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, item_id):
+        data = PODocumentService.set_payment_proof(str(item_id), request.FILES.get("file"))
+        return Response({"data": data})
+
+
+__all__ = [
+    "PODocumentListCreateView",
+    "PODocumentDetailView",
+    "PODocumentHistoryView",
+    "PODocumentPaymentProofView",
+]

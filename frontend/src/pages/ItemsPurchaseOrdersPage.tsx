@@ -13,9 +13,14 @@ const itemsPurchaseOrdersLinks: ItemsPurchaseOrdersLink[] = [
     description: 'Manage suppliers, manufacturers, shops and their PO prefixes.'
   },
   {
-    href: '/send-items',
-    title: 'Send Items',
-    description: 'Record goods sent to a vendor and deduct them from finished-goods inventory.'
+    href: '/request-to-quote',
+    title: 'Request to Quote',
+    description: 'Send vendors a request to quote prices, with PDF export.'
+  },
+  {
+    href: '/quotes',
+    title: 'Quote',
+    description: "Attach the vendor's quote document to a Request to Quote."
   },
   {
     href: '/purchase-orders',
@@ -23,9 +28,14 @@ const itemsPurchaseOrdersLinks: ItemsPurchaseOrdersLink[] = [
     description: 'Create formal purchase order documents with PDF export.'
   },
   {
-    href: '/request-to-quote',
-    title: 'Request to Quote',
-    description: 'Send vendors a request to quote prices, with PDF export.'
+    href: '/invoices',
+    title: 'Invoices',
+    description: "Attach the vendor's invoice document to a Purchase Order."
+  },
+  {
+    href: '/send-items',
+    title: 'Send Items',
+    description: 'Record goods sent to a vendor and deduct them from finished-goods inventory.'
   }
 ]
 

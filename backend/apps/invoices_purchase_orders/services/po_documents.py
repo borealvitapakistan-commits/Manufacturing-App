@@ -6,8 +6,22 @@ from typing import Any
 from services import db
 from services.base_service import ServiceError
 
+from . import attachments
+from .numbering import derive_number
+
 ORDER_TYPES = {"raw_material", "label", "product", "bottles_lids", "custom"}
 STATUSES = {"draft", "sent", "received", "canceled", "approved"}
+
+# Excludes payment_proof_file_data - list/history queries never need the
+# full base64 payload for every row, only individual get() responses do.
+LIST_COLUMNS = (
+    "id,po_number_seq,po_number,vendor_id,vendor_name,vendor_address,"
+    "ship_to_name,ship_to_address,ship_to_phone,brand_id,po_date,"
+    "terms_conditions,status,rtq_number,quote_number,subtotal,gst_percent,"
+    "others_value,shipping_value,grand_total,version,payment_proof_number,"
+    "payment_proof_file_name,payment_proof_file_size,payment_proof_file_type,"
+    "created_at,updated_at"
+)
 
 
 class PODocumentService:
@@ -49,7 +63,13 @@ class PODocumentService:
         }
 
     @classmethod
-    def _db_to_app(cls, row: dict[str, Any], *, items: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def _db_to_app(
+        cls,
+        row: dict[str, Any],
+        *,
+        items: list[dict[str, Any]] | None = None,
+        include_file: bool = True,
+    ) -> dict[str, Any]:
         doc_id = str(row["id"])
         if items is None:
             items = cls._item_rows(doc_id)
@@ -67,11 +87,24 @@ class PODocumentService:
             "poDate": row.get("po_date"),
             "termsConditions": row.get("terms_conditions"),
             "status": row.get("status") or "draft",
+            "rtqNumber": row.get("rtq_number"),
+            "quoteNumber": row.get("quote_number"),
             "subtotal": db.as_float(row.get("subtotal")),
             "gstPercent": db.as_float(row.get("gst_percent")),
             "othersValue": db.as_float(row.get("others_value")),
             "shippingValue": db.as_float(row.get("shipping_value")),
             "grandTotal": db.as_float(row.get("grand_total")),
+            "paymentProofNumber": row.get("payment_proof_number"),
+            "paymentProofFileName": row.get("payment_proof_file_name"),
+            "paymentProofFileUrl": (
+                attachments.data_url(row.get("payment_proof_file_data"), row.get("payment_proof_file_type"))
+                if include_file
+                else None
+            ),
+            "paymentProofFileType": row.get("payment_proof_file_type"),
+            "paymentProofFileSize": (
+                int(row["payment_proof_file_size"]) if row.get("payment_proof_file_size") is not None else None
+            ),
             "items": [cls._item_to_app(item) for item in items],
             "createdAt": db.timestamp_ms(row.get("created_at")),
             "updatedAt": db.timestamp_ms(row.get("updated_at")),
@@ -200,7 +233,7 @@ class PODocumentService:
         # Every save appends a new version under the same po_number rather
         # than editing in place, so the list view collapses each po_number
         # down to just its latest (highest-version) row.
-        query = db.client().table(cls.TABLE).select("*")
+        query = db.client().table(cls.TABLE).select(LIST_COLUMNS)
         for key, value in (filters or {}).items():
             if value not in (None, ""):
                 query = query.eq(key, value)
@@ -223,7 +256,7 @@ class PODocumentService:
 
         result = []
         for row in latest_rows:
-            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []))
+            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []), include_file=False)
             doc["versionCount"] = count_by_number.get(row.get("po_number") or "", 1)
             doc["isLatest"] = True
             result.append(doc)
@@ -251,7 +284,7 @@ class PODocumentService:
             db.execute(
                 db.client()
                 .table(cls.TABLE)
-                .select("*")
+                .select(LIST_COLUMNS)
                 .eq("po_number", anchor["po_number"])
                 .order("version", desc=True)
             )
@@ -261,7 +294,7 @@ class PODocumentService:
 
         result = []
         for row in rows:
-            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []))
+            doc = cls._db_to_app(row, items=items_by_doc.get(str(row["id"]), []), include_file=False)
             doc["isLatest"] = int(row.get("version") or 1) == max_version
             result.append(doc)
         return result
@@ -269,6 +302,35 @@ class PODocumentService:
     @classmethod
     def create(cls, payload: dict[str, Any]) -> dict[str, Any]:
         header = cls._clean_header(payload)
+
+        # Linking a PO to a Request to Quote is optional (ad-hoc POs with no
+        # RTQ keep working unchanged) - but a Quote must already exist for
+        # that RTQ, since Quote is the step between RTQ and PO in the
+        # documented procurement flow.
+        rtq_number = str(payload.get("rtqNumber") or "").strip() or None
+        if rtq_number:
+            quote = db.one(
+                db.execute(
+                    db.client()
+                    .table("quotes")
+                    .select("quote_number")
+                    .eq("rtq_number", rtq_number)
+                    .limit(1)
+                )
+            )
+            if not quote:
+                raise ServiceError(
+                    "Create a Quote for this Request to Quote before creating a Purchase Order from it.",
+                    409,
+                )
+            header["rtq_number"] = rtq_number
+            header["quote_number"] = quote.get("quote_number")
+            # The PO number always traces back to its Request to Quote -
+            # BOR-RTQ-004 -> BOR-PO-004 - rather than an independent
+            # sequence. Ad-hoc POs (no rtq_number) keep the independent
+            # per-brand sequence assigned by the assign_po_number() trigger.
+            header["po_number"] = derive_number(rtq_number, "RTQ", "PO", label="Purchase Order")
+
         if not header.get("brand_id"):
             raise ServiceError(
                 "Select a brand before saving a Purchase Order — its PO number depends on the brand.",
@@ -294,6 +356,19 @@ class PODocumentService:
         )
         doc_id = str(created["id"])
         cls._insert_items(doc_id, items)
+
+        if rtq_number:
+            # Not a new RTQ version - status isn't part of the version
+            # snapshot, same in-place update approve() used to do. Applies
+            # to every version row sharing this rtq_number, matching how
+            # delete() already treats "by number" operations as version-wide.
+            db.execute(
+                db.client()
+                .table("request_to_quote_documents")
+                .update({"status": "moved_to_po"})
+                .eq("rtq_number", rtq_number)
+            )
+
         return cls.get(doc_id)
 
     @classmethod
@@ -366,6 +441,13 @@ class PODocumentService:
         new_header = {
             "po_number": po_number,
             "version": current_version + 1,
+            "rtq_number": existing.get("rtq_number"),
+            "quote_number": existing.get("quote_number"),
+            "payment_proof_number": existing.get("payment_proof_number"),
+            "payment_proof_file_name": existing.get("payment_proof_file_name"),
+            "payment_proof_file_data": existing.get("payment_proof_file_data"),
+            "payment_proof_file_size": existing.get("payment_proof_file_size"),
+            "payment_proof_file_type": existing.get("payment_proof_file_type"),
             "vendor_id": merged.get("vendor_id"),
             "vendor_name": merged.get("vendor_name") or "",
             "vendor_address": merged.get("vendor_address"),
@@ -391,6 +473,33 @@ class PODocumentService:
         new_id = str(created["id"])
         cls._insert_items(new_id, items)
         return cls.get(new_id)
+
+    @classmethod
+    def set_payment_proof(cls, item_id: str, file: Any) -> dict[str, Any]:
+        """Attaches (or replaces) the Payment Proof file on this exact PO
+        row - in place, not as a new version, since it's supplementary
+        evidence rather than a content edit.
+        """
+        existing = db.require_row(
+            db.one(
+                db.execute(db.client().table(cls.TABLE).select("po_number").eq("id", item_id).limit(1))
+            ),
+            "Purchase order not found",
+        )
+        if not file:
+            raise ServiceError("Attach a file before saving Payment Proof.", 400)
+
+        # BOR-PO-004 -> BOR-PO-PP-004.
+        payment_proof_number = derive_number(existing.get("po_number"), "PO", "PO-PP", label="Payment Proof")
+        changes = {
+            "payment_proof_number": payment_proof_number,
+            "payment_proof_file_name": attachments.renamed(file, payment_proof_number),
+            "payment_proof_file_data": attachments.encode(file),
+            "payment_proof_file_size": file.size,
+            "payment_proof_file_type": getattr(file, "content_type", None),
+        }
+        db.execute(db.client().table(cls.TABLE).update(changes).eq("id", item_id))
+        return cls.get(item_id)
 
     @classmethod
     def delete(cls, item_id: str) -> None:

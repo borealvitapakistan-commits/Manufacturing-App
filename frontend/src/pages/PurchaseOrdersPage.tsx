@@ -32,13 +32,17 @@ import {
   deletePODocument,
   fetchBrands,
   fetchLabelInventory,
+  fetchPODocument,
   fetchPODocumentHistory,
   fetchPODocuments,
   fetchProducts,
+  fetchQuotes,
   fetchRawMaterials,
+  fetchRequestToQuoteDocuments,
   fetchVendors,
   initSupabase,
   savePODocument,
+  savePOPaymentProof,
 } from '@/lib/supabase/data'
 import { formatDate } from '@/lib/utils'
 import type {
@@ -48,7 +52,9 @@ import type {
   PODocument,
   PODocumentStatus,
   Product,
+  Quote,
   RawMaterial,
+  RequestToQuoteDocument,
   Vendor,
 } from '@/types'
 
@@ -86,6 +92,8 @@ export default function PurchaseOrdersPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([])
   const [labels, setLabels] = useState<LabelInventory[]>([])
+  const [rtqDocs, setRtqDocs] = useState<RequestToQuoteDocument[]>([])
+  const [quotes, setQuotes] = useState<Quote[]>([])
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -125,13 +133,15 @@ export default function PurchaseOrdersPage() {
       setLoading(true)
       setError('')
       await initSupabase()
-      const [docList, vendorList, brandList, productList, materialList, labelList] = await Promise.all([
+      const [docList, vendorList, brandList, productList, materialList, labelList, rtqList, quoteList] = await Promise.all([
         fetchPODocuments({ limit: 200 }),
         fetchVendors(),
         fetchBrands(),
         fetchProducts(),
         fetchRawMaterials(),
         fetchLabelInventory(),
+        fetchRequestToQuoteDocuments({ limit: 500 }),
+        fetchQuotes({ limit: 500 }),
       ])
       setDocs(docList)
       setVendors(vendorList)
@@ -139,6 +149,8 @@ export default function PurchaseOrdersPage() {
       setProducts(productList as Product[])
       setRawMaterials(materialList as RawMaterial[])
       setLabels(labelList as LabelInventory[])
+      setRtqDocs(rtqList)
+      setQuotes(quoteList)
     } catch (err) {
       console.error('Failed to load PO documents:', err)
       setError('Failed to load purchase orders.')
@@ -147,10 +159,13 @@ export default function PurchaseOrdersPage() {
     }
   }
 
-  async function handleSave(input: CreatePODocumentInput) {
+  async function handleSave(input: CreatePODocumentInput, paymentProofFile?: File | null) {
     try {
       setSaving(true)
-      const saved = await savePODocument(input)
+      let saved = await savePODocument(input)
+      if (paymentProofFile) {
+        saved = await savePOPaymentProof(saved.id, paymentProofFile)
+      }
       showToast({
         message: input.id ? `${saved.poNumber} — new version saved (v${saved.version})` : `PO ${saved.poNumber} created`,
         type: 'success',
@@ -204,9 +219,17 @@ export default function PurchaseOrdersPage() {
 
   // ── Version history ───────────────────────────────────────────────────────
 
-  function openVersion(doc: PODocument, readOnly: boolean) {
+  async function openVersion(doc: PODocument, readOnly: boolean) {
     setEditingReadOnly(readOnly)
     setEditingDoc(doc)
+    // History rows omit the (potentially large) Payment Proof file content -
+    // fetch the full record so its download link is available once opened.
+    try {
+      const full = await fetchPODocument(doc.id)
+      if (full) setEditingDoc(full)
+    } catch (err) {
+      console.error('Failed to load full PO document:', err)
+    }
   }
 
   async function toggleExpand(doc: PODocument) {
@@ -537,6 +560,15 @@ export default function PurchaseOrdersPage() {
     }
   }
 
+  // RTQs eligible to link a new PO to: must already have a Quote attached,
+  // and not already be linked to a PO.
+  const eligibleRtqs = useMemo(() => {
+    const quoteByRtq = new Map(quotes.map(q => [q.rtqNumber, q.quoteNumber]))
+    return rtqDocs
+      .filter(rtq => rtq.status !== 'moved_to_po' && quoteByRtq.has(rtq.rtqNumber))
+      .map(rtq => ({ ...rtq, quoteNumber: quoteByRtq.get(rtq.rtqNumber)! }))
+  }, [rtqDocs, quotes])
+
   // ── Filter ─────────────────────────────────────────────────────────────────
 
   const filteredDocs = useMemo(() => {
@@ -631,6 +663,7 @@ export default function PurchaseOrdersPage() {
             rawMaterials={rawMaterials}
             products={products}
             labels={labels}
+            eligibleRtqs={eligibleRtqs}
             saving={saving}
             readOnly={editingReadOnly}
             onSave={handleSave}

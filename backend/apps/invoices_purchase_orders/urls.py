@@ -1,10 +1,14 @@
 from django.urls import path
 
 from .views import (
+    InvoiceDetailView,
+    InvoiceListCreateView,
     PODocumentDetailView,
     PODocumentHistoryView,
     PODocumentListCreateView,
-    RequestToQuoteApproveView,
+    PODocumentPaymentProofView,
+    QuoteDetailView,
+    QuoteListCreateView,
     RequestToQuoteDetailView,
     RequestToQuoteHistoryView,
     RequestToQuoteListCreateView,
@@ -29,6 +33,11 @@ urlpatterns = [
         name="po-document-history",
     ),
     path(
+        "po-documents/<uuid:item_id>/payment-proof/",
+        PODocumentPaymentProofView.as_view(),
+        name="po-document-payment-proof",
+    ),
+    path(
         "request-to-quote-documents/",
         RequestToQuoteListCreateView.as_view(),
         name="request-to-quote-list-create",
@@ -43,9 +52,8 @@ urlpatterns = [
         RequestToQuoteHistoryView.as_view(),
         name="request-to-quote-history",
     ),
-    path(
-        "request-to-quote-documents/<uuid:item_id>/approve/",
-        RequestToQuoteApproveView.as_view(),
-        name="request-to-quote-approve",
-    ),
+    path("quotes/", QuoteListCreateView.as_view(), name="quote-list-create"),
+    path("quotes/<uuid:item_id>/", QuoteDetailView.as_view(), name="quote-detail"),
+    path("invoices/", InvoiceListCreateView.as_view(), name="invoice-list-create"),
+    path("invoices/<uuid:item_id>/", InvoiceDetailView.as_view(), name="invoice-detail"),
 ]

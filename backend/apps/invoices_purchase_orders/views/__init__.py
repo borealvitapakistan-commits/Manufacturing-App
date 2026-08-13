@@ -1,12 +1,18 @@
 from .vendors import VendorDetailView, VendorListCreateView
 from .sent_items import SentItemDetailView, SentItemListCreateView, SentItemSourcesView
-from .po_documents import PODocumentDetailView, PODocumentHistoryView, PODocumentListCreateView
+from .po_documents import (
+    PODocumentDetailView,
+    PODocumentHistoryView,
+    PODocumentListCreateView,
+    PODocumentPaymentProofView,
+)
 from .request_to_quote import (
-    RequestToQuoteApproveView,
     RequestToQuoteDetailView,
     RequestToQuoteHistoryView,
     RequestToQuoteListCreateView,
 )
+from .quotes import QuoteDetailView, QuoteListCreateView
+from .invoices import InvoiceDetailView, InvoiceListCreateView
 
 __all__ = [
     "VendorDetailView",
@@ -17,8 +23,12 @@ __all__ = [
     "PODocumentDetailView",
     "PODocumentListCreateView",
     "PODocumentHistoryView",
+    "PODocumentPaymentProofView",
     "RequestToQuoteDetailView",
     "RequestToQuoteListCreateView",
     "RequestToQuoteHistoryView",
-    "RequestToQuoteApproveView",
+    "QuoteDetailView",
+    "QuoteListCreateView",
+    "InvoiceDetailView",
+    "InvoiceListCreateView",
 ]
