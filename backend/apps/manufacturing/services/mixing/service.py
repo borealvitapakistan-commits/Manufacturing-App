@@ -158,7 +158,183 @@ class MixingService(MixingRules):
         )
 
     @classmethod
-    def _db_to_app(cls, row: dict[str, Any]) -> dict[str, Any]:
+    def _brand_rows(cls, mixing_id: str) -> list[dict[str, Any]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("mixing_brands")
+                .select("*, brands(id, name, code_prefix)")
+                .eq("mixing_id", mixing_id)
+                .order("created_at")
+            )
+        )
+        return cls._shape_brand_rows(rows)
+
+    @classmethod
+    def _brand_rows_bulk(cls, mixing_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Fetch mixing_brands for many mixings in one query - avoids an N+1
+        round trip per row on list() (same reasoning as Assembly's
+        _brand_lot_rows_bulk).
+        """
+        if not mixing_ids:
+            return {}
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("mixing_brands")
+                .select("*, brands(id, name, code_prefix)")
+                .in_("mixing_id", mixing_ids)
+                .order("created_at")
+            )
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get("mixing_id")), []).append(row)
+        return {mixing_id: cls._shape_brand_rows(group) for mixing_id, group in grouped.items()}
+
+    @staticmethod
+    def _shape_brand_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result = []
+        for row in rows:
+            brand = row.get("brands") or {}
+            result.append(
+                to_json_value(
+                    {
+                        "brandId": str(row.get("brand_id") or ""),
+                        "brandName": brand.get("name") or "",
+                        "codePrefix": brand.get("code_prefix") or "",
+                        "isPrimary": bool(row.get("is_primary")),
+                    }
+                )
+            )
+        return result
+
+    @classmethod
+    def _ingredient_rows(cls, mixing_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("mixing_ingredients")
+                .select("*")
+                .eq("mixing_id", mixing_id)
+                .order("sort_order")
+            )
+        )
+        return cls._shape_ingredient_rows(rows)
+
+    @classmethod
+    def _ingredient_rows_bulk(
+        cls, mixing_ids: list[str]
+    ) -> dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+        """Fetch mixing_ingredients for many mixings in one query."""
+        if not mixing_ids:
+            return {}
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("mixing_ingredients")
+                .select("*")
+                .in_("mixing_id", mixing_ids)
+                .order("sort_order")
+            )
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get("mixing_id")), []).append(row)
+        return {mixing_id: cls._shape_ingredient_rows(group) for mixing_id, group in grouped.items()}
+
+    @staticmethod
+    def _shape_ingredient_rows(
+        rows: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        medicinal: list[dict[str, Any]] = []
+        non_medicinal: list[dict[str, Any]] = []
+        for row in rows:
+            metadata = dict(row.get("metadata") or {})
+            shaped = to_json_value(
+                {
+                    **metadata,
+                    "sr": row.get("sort_order"),
+                    "clNo": row.get("sort_order"),
+                    "rawMaterialId": (
+                        str(row["raw_material_id"])
+                        if row.get("raw_material_id")
+                        else metadata.get("rawMaterialId")
+                    ),
+                    "rawMaterialName": (
+                        row.get("raw_material_name")
+                        or metadata.get("rawMaterialName")
+                        or metadata.get("rawMaterial")
+                    ),
+                    "mgDoseUsed": db.as_float(row.get("mg_dose_used")),
+                    "percentShare": db.as_float(row.get("percent_share")),
+                    "kgUsed": db.as_float(row.get("kg_used")),
+                    "remarks": row.get("remarks") or metadata.get("remarks") or "",
+                }
+            )
+            if (row.get("ingredient_type") or "").strip() == "non_medicinal":
+                non_medicinal.append(shaped)
+            else:
+                medicinal.append(shaped)
+        return medicinal, non_medicinal
+
+    @classmethod
+    def _time_log_rows(cls, mixing_id: str) -> list[dict[str, Any]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("mixing_sessions")
+                .select("*")
+                .eq("mixing_id", mixing_id)
+                .order("sort_order")
+            )
+        )
+        return cls._shape_time_log_rows(rows)
+
+    @classmethod
+    def _time_log_rows_bulk(cls, mixing_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Fetch mixing_sessions for many mixings in one query."""
+        if not mixing_ids:
+            return {}
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("mixing_sessions")
+                .select("*")
+                .in_("mixing_id", mixing_ids)
+                .order("sort_order")
+            )
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get("mixing_id")), []).append(row)
+        return {mixing_id: cls._shape_time_log_rows(group) for mixing_id, group in grouped.items()}
+
+    @staticmethod
+    def _shape_time_log_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            to_json_value(
+                {
+                    "date": row.get("session_date"),
+                    "startDate": row.get("session_date"),
+                    "startTime": db.hhmm(row.get("start_time")),
+                    "endDate": row.get("session_date"),
+                    "endTime": db.hhmm(row.get("end_time")),
+                    "remarks": row.get("remarks") or "",
+                }
+            )
+            for row in rows
+        ]
+
+    @classmethod
+    def _db_to_app(
+        cls,
+        row: dict[str, Any],
+        *,
+        brand_rows: list[dict[str, Any]] | None = None,
+        ingredient_rows: tuple[list[dict[str, Any]], list[dict[str, Any]]] | None = None,
+        session_rows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         snapshot = dict(row.get("record_snapshot") or {})
         item_id = str(row["id"])
         available = Decimal("0")
@@ -172,6 +348,43 @@ class MixingService(MixingRules):
                 ),
             )
 
+        # Prefer the live mixing_brands / mixing_ingredients / mixing_sessions
+        # rows over the record_snapshot blob - the snapshot only reflects
+        # whatever the frontend happened to submit at save time, while these
+        # child tables are the real, queryable source of truth (same
+        # reasoning as Encapsulation's load-checks fix). list() bulk-fetches
+        # and passes these in to avoid an N+1 query per row; get() leaves
+        # them None to fetch live for just the one record.
+        live_brands = brand_rows if brand_rows is not None else cls._brand_rows(item_id)
+        brand_ids = (
+            [b["brandId"] for b in live_brands] if live_brands else (snapshot.get("brandIds") or [])
+        )
+        brand_names = (
+            [b["brandName"] for b in live_brands] if live_brands else (snapshot.get("brandNames") or [])
+        )
+        medicinal_live, non_medicinal_live = (
+            ingredient_rows if ingredient_rows is not None else cls._ingredient_rows(item_id)
+        )
+        medicinal_ingredients = medicinal_live or (
+            snapshot.get("medicinalIngredients")
+            or snapshot.get("rawMaterials")
+            or snapshot.get("byBookRawMaterials")
+            or []
+        )
+        non_medicinal_ingredients = non_medicinal_live or (
+            snapshot.get("nonMedicinalIngredients")
+            or snapshot.get("nonMedUsage")
+            or snapshot.get("nmiRows")
+            or []
+        )
+        live_sessions = session_rows if session_rows is not None else cls._time_log_rows(item_id)
+        mixing_sessions = live_sessions or (
+            snapshot.get("mixingSessions")
+            or snapshot.get("mixingTimeLogs")
+            or snapshot.get("timeLogs")
+            or []
+        )
+
         snapshot.update(
             {
                 "id": item_id,
@@ -180,6 +393,12 @@ class MixingService(MixingRules):
                 "location": row.get("location_text") or snapshot.get("location") or "",
                 "rackNo": row.get("location_text") or snapshot.get("rackNo") or "",
                 "totalKgInMixing": db.as_float(row.get("total_kg_in_mixing")),
+                "brandIds": brand_ids,
+                "brandNames": brand_names,
+                "mixingBrands": live_brands,
+                "medicinalIngredients": medicinal_ingredients,
+                "nonMedicinalIngredients": non_medicinal_ingredients,
+                "mixingSessions": mixing_sessions,
                 "existingMixedPowderId": (
                     str(row["existing_mixed_powder_id"])
                     if row.get("existing_mixed_powder_id")
@@ -231,7 +450,19 @@ class MixingService(MixingRules):
                 .limit(max(1, min(int(limit or 500), 2000)))
             )
         )
-        records = [cls._db_to_app(row) for row in rows]
+        item_ids = [str(row["id"]) for row in rows]
+        brands_by_id = cls._brand_rows_bulk(item_ids)
+        ingredients_by_id = cls._ingredient_rows_bulk(item_ids)
+        sessions_by_id = cls._time_log_rows_bulk(item_ids)
+        records = [
+            cls._db_to_app(
+                row,
+                brand_rows=brands_by_id.get(str(row["id"]), []),
+                ingredient_rows=ingredients_by_id.get(str(row["id"]), ([], [])),
+                session_rows=sessions_by_id.get(str(row["id"]), []),
+            )
+            for row in rows
+        ]
         if brand_id:
             records = [record for record in records if cls._record_has_brand(record, str(brand_id))]
         if product_id:

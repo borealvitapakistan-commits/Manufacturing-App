@@ -141,6 +141,29 @@ class EncapsulationService(EncapsulationRules):
                 .order("sort_order")
             )
         )
+        return cls._shape_session_rows(rows)
+
+    @classmethod
+    def _session_rows_bulk(cls, item_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Fetch encapsulation_sessions for many encapsulations in one query."""
+        if not item_ids:
+            return {}
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table(cls.SESSIONS_TABLE)
+                .select("*")
+                .in_(cls.FK_COLUMN, item_ids)
+                .order("sort_order")
+            )
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get(cls.FK_COLUMN)), []).append(row)
+        return {item_id: cls._shape_session_rows(group) for item_id, group in grouped.items()}
+
+    @staticmethod
+    def _shape_session_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         sessions: list[dict[str, Any]] = []
         for row in rows:
             sessions.append(
@@ -148,14 +171,38 @@ class EncapsulationService(EncapsulationRules):
                     {
                         "date": row.get("session_date"),
                         "startDate": row.get("session_date"),
-                        "startTime": row.get("start_time") or "",
+                        "startTime": db.hhmm(row.get("start_time")),
                         "endDate": row.get("session_date"),
-                        "endTime": row.get("end_time") or "",
+                        "endTime": db.hhmm(row.get("end_time")),
                         "remarks": row.get("remarks") or "",
                     }
                 )
             )
         return sessions
+
+    @staticmethod
+    def _mg_or_none(value: Any) -> float | None:
+        return db.as_float(value) if value is not None else None
+
+    @classmethod
+    def _split_checked_at(cls, value: Any) -> tuple[str | None, str | None]:
+        """Splits the legacy `checked_at` timestamp into (date, time) strings,
+        for load-check rows recorded before check_date/check_time existed as
+        their own columns (016 backfilled these only where `metadata` was set).
+        """
+        if not value:
+            return None, None
+        try:
+            parsed = (
+                value
+                if isinstance(value, datetime)
+                else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            )
+            if timezone.is_aware(parsed):
+                parsed = timezone.localtime(parsed, timezone.get_current_timezone())
+            return parsed.date().isoformat(), parsed.strftime("%H:%M")
+        except (ValueError, TypeError):
+            return None, None
 
     @classmethod
     def _load_check_rows(cls, item_id: str) -> list[dict[str, Any]]:
@@ -168,28 +215,60 @@ class EncapsulationService(EncapsulationRules):
                 .order("created_at")
             )
         )
+        return cls._shape_load_check_rows(rows)
+
+    @classmethod
+    def _load_check_rows_bulk(cls, item_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Fetch encapsulation_load_checks for many encapsulations in one query.
+
+        Avoids an N+1 round trip per row on list() - the same reasoning as
+        Assembly's _brand_lot_rows_bulk.
+        """
+        if not item_ids:
+            return {}
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table(cls.LOAD_CHECKS_TABLE)
+                .select("*")
+                .in_(cls.FK_COLUMN, item_ids)
+                .order("created_at")
+            )
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get(cls.FK_COLUMN)), []).append(row)
+        return {item_id: cls._shape_load_check_rows(group) for item_id, group in grouped.items()}
+
+    @classmethod
+    def _shape_load_check_rows(cls, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         checks: list[dict[str, Any]] = []
         for row in rows:
             metadata = dict(row.get("metadata") or {})
             avg_mg = db.as_float(row.get("avg_mg") or row.get("average_weight_mg"))
+            fallback_date, fallback_time = cls._split_checked_at(row.get("checked_at"))
+            check_date = row.get("check_date") or fallback_date
+            check_time = row.get("check_time") or fallback_time
             checks.append(
                 to_json_value(
                     {
                         **metadata,
-                        "checkDate": row.get("check_date"),
-                        "date": row.get("check_date"),
-                        "checkTime": row.get("check_time"),
-                        "time": row.get("check_time"),
+                        "checkDate": check_date,
+                        "date": check_date,
+                        "checkTime": check_time,
+                        "time": check_time,
                         "loadLabel": row.get("load_label") or metadata.get("loadLabel"),
                         "load": row.get("load_label") or metadata.get("load"),
-                        "w1Mg": db.as_float(row.get("w1_mg")),
-                        "w2Mg": db.as_float(row.get("w2_mg")),
-                        "w3Mg": db.as_float(row.get("w3_mg")),
-                        "w4Mg": db.as_float(row.get("w4_mg")),
-                        "w5Mg": db.as_float(row.get("w5_mg")),
+                        "w1Mg": cls._mg_or_none(row.get("w1_mg")),
+                        "w2Mg": cls._mg_or_none(row.get("w2_mg")),
+                        "w3Mg": cls._mg_or_none(row.get("w3_mg")),
+                        "w4Mg": cls._mg_or_none(row.get("w4_mg")),
+                        "w5Mg": cls._mg_or_none(row.get("w5_mg")),
                         "avgMg": avg_mg,
                         "avgWeightMg": avg_mg,
                         "averageWeightMg": avg_mg,
+                        "minWeightMg": cls._mg_or_none(row.get("min_weight_mg")),
+                        "maxWeightMg": cls._mg_or_none(row.get("max_weight_mg")),
                         "sampleCount": row.get("sample_count"),
                         "operatorName": row.get("operator_name") or "",
                         "remarks": row.get("remarks") or "",
@@ -226,7 +305,13 @@ class EncapsulationService(EncapsulationRules):
         return products
 
     @classmethod
-    def _db_to_app(cls, row: dict[str, Any]) -> dict[str, Any]:
+    def _db_to_app(
+        cls,
+        row: dict[str, Any],
+        *,
+        session_rows: list[dict[str, Any]] | None = None,
+        load_check_rows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         snapshot = dict(row.get("record_snapshot") or {})
         item_id = str(row["id"])
         available = Decimal("0")
@@ -249,13 +334,49 @@ class EncapsulationService(EncapsulationRules):
             snapshot.get("encapsulationSessions")
             or snapshot.get("njpSessions")
             or snapshot.get("timeLogs")
-            or cls._session_rows(item_id)
+            or (session_rows if session_rows is not None else cls._session_rows(item_id))
         )
-        load_checks = (
+        # Prefer the live encapsulation_load_checks rows - they're the real,
+        # queryable source of truth and (after the check_date/check_time/
+        # w1-w5/min/max fallbacks in _load_check_rows) are more complete than
+        # a record_snapshot blob frozen by whatever payload shape the
+        # frontend happened to submit at save time. Snapshot only fills in
+        # for legacy records with no child rows at all.
+        # (load_check_rows/session_rows are pre-fetched in bulk by list() to
+        # avoid an N+1 query per row - get() leaves them None to fetch live.)
+        resolved_load_checks = (
+            load_check_rows if load_check_rows is not None else cls._load_check_rows(item_id)
+        )
+        load_checks = resolved_load_checks or (
             snapshot.get("encapsulationLoadChecks")
             or snapshot.get("loadChecks")
             or snapshot.get("njpLoadChecks")
-            or cls._load_check_rows(item_id)
+            or []
+        )
+        mixing_used_kg = (
+            snapshot.get("mixingUsedInEncapsulationKg")
+            or snapshot.get("mixingUsedInNJPkg")
+            or db.as_float(row.get("available_mixing_used_kg"))
+        )
+        mixing_after_kg = (
+            snapshot.get("mixingAvailableAfterEncapsulationKg")
+            or snapshot.get("mixingAvailableAfterNJPkg")
+            # Older records only ever captured this generic "currently
+            # available" figure, under a name that predates the
+            # before/after split.
+            or snapshot.get("mixingAvailableKg")
+        )
+        # "Before" was never captured directly in some older snapshots, but
+        # it's always derivable from the two figures that were: before =
+        # used + after.
+        mixing_before_kg = (
+            snapshot.get("mixingAvailableBeforeEncapsulationKg")
+            or snapshot.get("mixingAvailableBeforeNJPkg")
+            or (
+                db.as_float(mixing_used_kg) + db.as_float(mixing_after_kg)
+                if mixing_after_kg is not None
+                else None
+            )
         )
         snapshot.update(
             {
@@ -279,20 +400,12 @@ class EncapsulationService(EncapsulationRules):
                 "netCapsulesFilledQty": int(db.as_decimal(row.get("net_capsules_qty"))),
                 "availableCapsulesQty": int(available),
                 "remainingCapsulesQty": int(available),
-                "mixingAvailableBeforeEncapsulationKg": snapshot.get("mixingAvailableBeforeEncapsulationKg")
-                or snapshot.get("mixingAvailableBeforeNJPkg"),
-                "mixingUsedInEncapsulationKg": snapshot.get("mixingUsedInEncapsulationKg")
-                or snapshot.get("mixingUsedInNJPkg")
-                or db.as_float(row.get("available_mixing_used_kg")),
-                "mixingAvailableAfterEncapsulationKg": snapshot.get("mixingAvailableAfterEncapsulationKg")
-                or snapshot.get("mixingAvailableAfterNJPkg"),
-                "mixingAvailableBeforeNJPkg": snapshot.get("mixingAvailableBeforeNJPkg")
-                or snapshot.get("mixingAvailableBeforeEncapsulationKg"),
-                "mixingUsedInNJPkg": snapshot.get("mixingUsedInNJPkg")
-                or snapshot.get("mixingUsedInEncapsulationKg")
-                or db.as_float(row.get("available_mixing_used_kg")),
-                "mixingAvailableAfterNJPkg": snapshot.get("mixingAvailableAfterNJPkg")
-                or snapshot.get("mixingAvailableAfterEncapsulationKg"),
+                "mixingAvailableBeforeEncapsulationKg": mixing_before_kg,
+                "mixingUsedInEncapsulationKg": mixing_used_kg,
+                "mixingAvailableAfterEncapsulationKg": mixing_after_kg,
+                "mixingAvailableBeforeNJPkg": mixing_before_kg,
+                "mixingUsedInNJPkg": mixing_used_kg,
+                "mixingAvailableAfterNJPkg": mixing_after_kg,
                 "emptyCapsuleUnitWeightMg": db.as_float(row.get("empty_capsule_weight_mg")),
                 "totalCapsulesProducedKg": db.as_float(row.get("total_capsules_produced_kg")),
                 "yieldPercent": db.as_float(row.get("yield_percent")),
@@ -366,7 +479,17 @@ class EncapsulationService(EncapsulationRules):
                 .limit(max(1, min(int(limit or 500), 2000)))
             )
         )
-        records = [cls._db_to_app(row) for row in rows]
+        item_ids = [str(row["id"]) for row in rows]
+        sessions_by_id = cls._session_rows_bulk(item_ids)
+        load_checks_by_id = cls._load_check_rows_bulk(item_ids)
+        records = [
+            cls._db_to_app(
+                row,
+                session_rows=sessions_by_id.get(str(row["id"]), []),
+                load_check_rows=load_checks_by_id.get(str(row["id"]), []),
+            )
+            for row in rows
+        ]
         if mixing_id:
             records = [record for record in records if str(record.get("mixingId")) == str(mixing_id)]
         if brand_id:

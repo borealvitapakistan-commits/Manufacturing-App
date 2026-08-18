@@ -658,16 +658,20 @@ function buildMixingDetailSections(row: MixingPowderRow): ReportSection[] {
   const medicinalIngredients = firstArray(record, ['medicinalIngredients', 'rawMaterials', 'byBookRawMaterials'])
   const nonMedicinalIngredients = firstArray(record, ['nonMedicinalIngredients', 'nonMedUsage', 'nmiRows'])
   const timeLogs = firstArray(record, ['mixingSessions', 'mixingTimeLogs', 'timeLogs'])
+  const mixingBrands = firstArray(record, ['mixingBrands'])
 
   return [
     sectionFromDetails('Mixing / Powder Details', [
       detailRow('Mixing Code', record.mixingCode),
       detailRow('Brand', record.brandName ?? record.brandNames),
       detailRow('Product Name', record.productName ?? record.mixedPowderName),
+      detailRow('Mixed Powder Name', record.mixedPowderName),
       detailRow('Product Code', mixingProductCode(row)),
       detailRow('Location', record.location ?? record.rackNo),
+      detailRow('Status', record.status),
       detailRow('Total Kg in Mixing', record.totalKgInMixing ?? record.totalKg ?? record.totalMixingKg),
       detailRow('Available Mixed Powder Kg', record.availableMixedPowderKg ?? record.remainingMixedPowderKg ?? record.mixedPowderInventoryKg),
+      detailRow('Existing Mixed Powder Source', record.existingMixedPowderSource),
       detailRow('Existing Mixed Powder Code', record.existingMixedPowderCode),
       detailRow('Existing Mixed Powder Used Kg', record.existingMixedPowderUsedKg),
       detailRow('Fresh Mixing Required Kg', record.freshMixingRequiredKg),
@@ -695,6 +699,14 @@ function buildMixingDetailSections(row: MixingPowderRow): ReportSection[] {
       title: 'Non-Medicinal Ingredients',
       columns: ingredientColumns,
       rows: nonMedicinalIngredients
+    },
+    {
+      title: 'Mixing Brands',
+      columns: [
+        { label: 'Brand', width: 220, get: (item: Record<string, any>) => reportValue(item.brandName) },
+        { label: 'Primary', width: 90, get: (item: Record<string, any>) => reportValue(item.isPrimary) }
+      ],
+      rows: mixingBrands
     }
   ]
 }
@@ -707,6 +719,7 @@ function buildEncapsulationDetailSections(row: EncapsulationRow): ReportSection[
   const sections: ReportSection[] = [
     sectionFromDetails('Encapsulation / Capsule Details', [
       detailRow('Encapsulation Code', encapsulationCode(row)),
+      detailRow('Lot Number', record.lotNumber),
       detailRow('Mixing Code', encapsulationMixingCode(row)),
       detailRow('Mixing Name', record.mixingName),
       detailRow('Brand', record.brandName ?? record.brandNames),
@@ -760,9 +773,20 @@ function buildEncapsulationDetailSections(row: EncapsulationRow): ReportSection[
     sections.push({
       title: 'Encapsulation Load Checks',
       columns: [
-        { label: 'Check', width: 180, get: item => reportValue(item.label ?? item.name ?? item.check) },
-        { label: 'Value', width: 120, get: item => reportValue(item.value ?? item.status ?? item.checked) },
-        { label: 'Remarks', width: 180, get: item => reportValue(item.remarks) }
+        { label: 'Date', width: 80, get: item => displayDate(item.checkDate) },
+        { label: 'Time', width: 65, get: item => reportValue(item.checkTime) },
+        { label: 'Load', width: 70, get: item => reportValue(item.loadLabel) },
+        { label: 'W1 Mg', width: 55, get: item => reportValue(item.w1Mg) },
+        { label: 'W2 Mg', width: 55, get: item => reportValue(item.w2Mg) },
+        { label: 'W3 Mg', width: 55, get: item => reportValue(item.w3Mg) },
+        { label: 'W4 Mg', width: 55, get: item => reportValue(item.w4Mg) },
+        { label: 'W5 Mg', width: 55, get: item => reportValue(item.w5Mg) },
+        { label: 'Avg Mg', width: 60, get: item => reportValue(item.avgMg) },
+        { label: 'Min Mg', width: 60, get: item => reportValue(item.minWeightMg) },
+        { label: 'Max Mg', width: 60, get: item => reportValue(item.maxWeightMg) },
+        { label: 'Samples', width: 60, get: item => reportValue(item.sampleCount) },
+        { label: 'Operator', width: 100, get: item => reportValue(item.operatorName) },
+        { label: 'Remarks', width: 120, get: item => reportValue(item.remarks) }
       ],
       rows: loadChecks
     })
@@ -800,18 +824,19 @@ function buildAssemblyDetailSections(row: AssemblyBottleRow, batchColumns: Assem
       detailRow('Capsules Received Kg', record.capsulesReceivedKg),
       detailRow('Bottle Type', record.bottleCapsuleType ?? record.bottleSize ?? record.bottleCC),
       detailRow('Filled Bottle Weight', assemblyFilledBottleWeight(row)),
-      detailRow('Capsules Available Before Assembly Qty', record.capsulesAvailableBeforeAssemblyQty),
-      detailRow('Capsules Used in Assembly Qty', record.capsulesUsedInAssemblyQty),
-      detailRow('Capsules Available After Assembly Qty', record.capsulesAvailableAfterAssemblyQty),
-      detailRow('Capsules Available Before Assembly Kg', record.capsulesAvailableBeforeAssemblyKg),
-      detailRow('Capsules Used in Assembly Kg', record.capsulesUsedInAssemblyKg),
-      detailRow('Capsules Available After Assembly Kg', record.capsulesAvailableAfterAssemblyKg),
+      detailRow('Total Labels Used', record.totalLabelsUsed),
       dateDetailRow('Production Date', record.productionDate ?? record.production_date),
       dateDetailRow('Expiry Date', record.expiryDate ?? record.expiry_date),
       dateDetailRow('Start Date', record.startDate),
       detailRow('Start Time', record.startTime),
       dateDetailRow('End Date', record.endDate),
       detailRow('End Time', record.endTime),
+      dateDetailRow('Quality Control Date', record.qualityControlDate ?? record.qcDate),
+      detailRow('Quality Control Start Time', record.qualityControlStartTime ?? record.qcStartTime),
+      detailRow('Quality Control End Time', record.qualityControlEndTime ?? record.qcEndTime),
+      dateDetailRow('Packaging Date', record.packagingDate ?? record.packageDate),
+      detailRow('Packaging Start Time', record.packagingStartTime),
+      detailRow('Packaging End Time', record.packagingEndTime),
       detailRow('Status', assemblyStatus(row)),
       detailRow('Operator Name', record.operatorName),
       detailRow('Comments', record.comments ?? record.remarks)
@@ -820,6 +845,16 @@ function buildAssemblyDetailSections(row: AssemblyBottleRow, batchColumns: Assem
       title: 'Assembly Daily Time Log',
       columns: timeLogColumns,
       rows: timeLogs
+    },
+    {
+      title: 'Assembly Brands',
+      columns: [
+        { label: 'Brand', width: 160, get: (item: Record<string, any>) => reportValue(item.brandName) },
+        { label: 'Batch Code', width: 130, get: (item: Record<string, any>) => reportValue(item.batchCode) },
+        { label: 'Bottles Qty', width: 90, get: (item: Record<string, any>) => reportValue(item.bottlesQty) },
+        { label: 'Comments', width: 160, get: (item: Record<string, any>) => reportValue(item.comments) }
+      ],
+      rows: firstArray(record, ['brandBatchCodes'])
     }
   ]
 }

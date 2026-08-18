@@ -74,6 +74,12 @@ def clean_text(value: Any) -> str | None:
     return text or None
 
 
+def hhmm(value: Any) -> str:
+    """Trims a Postgres `time` value's trailing seconds - "13:40:00" -> "13:40"."""
+    text = str(value or "").strip()
+    return text[:5] if text else ""
+
+
 def date_from_ms(value: Any) -> str | None:
     if value in (None, ""):
         return None

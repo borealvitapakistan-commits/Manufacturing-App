@@ -93,6 +93,54 @@ class AssemblyService(AssemblyRules):
         return by_assembly
 
     @classmethod
+    def _time_log_rows(cls, assembly_id: str) -> list[dict[str, Any]]:
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("assembly_sessions")
+                .select("*")
+                .eq("assembly_id", assembly_id)
+                .order("sort_order")
+            )
+        )
+        return cls._shape_time_log_rows(rows)
+
+    @classmethod
+    def _time_log_rows_bulk(cls, assembly_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Fetch assembly_sessions for many assemblies in one query."""
+        if not assembly_ids:
+            return {}
+        rows = db.data(
+            db.execute(
+                db.client()
+                .table("assembly_sessions")
+                .select("*")
+                .in_("assembly_id", assembly_ids)
+                .order("sort_order")
+            )
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get("assembly_id")), []).append(row)
+        return {assembly_id: cls._shape_time_log_rows(group) for assembly_id, group in grouped.items()}
+
+    @staticmethod
+    def _shape_time_log_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            to_json_value(
+                {
+                    "date": row.get("session_date"),
+                    "startDate": row.get("session_date"),
+                    "startTime": db.hhmm(row.get("start_time")),
+                    "endDate": row.get("session_date"),
+                    "endTime": db.hhmm(row.get("end_time")),
+                    "remarks": row.get("remarks") or "",
+                }
+            )
+            for row in rows
+        ]
+
+    @classmethod
     def _available_bottle_quantity(cls, brand_lots: list[dict[str, Any]]) -> int:
         """Live remaining bottle count across this assembly's finished-goods lots.
 
@@ -120,6 +168,7 @@ class AssemblyService(AssemblyRules):
         row: dict[str, Any],
         *,
         brand_lots: list[dict[str, Any]] | None = None,
+        session_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         snapshot = dict(row.get("record_snapshot") or {})
         assembly_id = str(row["id"])
@@ -137,8 +186,22 @@ class AssemblyService(AssemblyRules):
                     "batchCode": item.get("batch_code") or "",
                     "assemblyCode": item.get("assembly_code") or item.get("batch_code") or "",
                     "bottlesQty": item.get("bottles_qty") or 0,
+                    "comments": item.get("comments") or "",
                 }
             )
+
+        # Prefer the live assembly_sessions rows over the record_snapshot
+        # blob - same reasoning as Encapsulation's load-checks and Mixing's
+        # sessions/ingredients/brands fixes. list() bulk-fetches and passes
+        # these in to avoid an N+1 query per row; get() leaves it None to
+        # fetch live for just the one record.
+        live_sessions = session_rows if session_rows is not None else cls._time_log_rows(assembly_id)
+        assembly_sessions = live_sessions or (
+            snapshot.get("assemblySessions")
+            or snapshot.get("assemblyTimeLogs")
+            or snapshot.get("timeLogs")
+            or []
+        )
 
         bottle_type = row.get("bottle_type") or snapshot.get("bottleType") or ""
         bottle_size = str(row.get("bottle_size")) if row.get("bottle_size") is not None else ""
@@ -148,6 +211,7 @@ class AssemblyService(AssemblyRules):
                 "assemblyCode": row.get("assembly_code") or "",
                 "batchCode": row.get("batch_code") or snapshot.get("batchCode") or "",
                 "brandBatchCodes": brand_batch_codes,
+                "assemblySessions": assembly_sessions,
                 "batchCodeDisplay": cls._batch_code_display(
                     brand_batch_codes,
                     row.get("assembly_code") or "",
@@ -244,9 +308,15 @@ class AssemblyService(AssemblyRules):
                 .limit(max(1, min(int(limit or 500), 2000)))
             )
         )
-        brand_lots_by_assembly = cls._brand_lot_rows_bulk([str(row["id"]) for row in rows])
+        item_ids = [str(row["id"]) for row in rows]
+        brand_lots_by_assembly = cls._brand_lot_rows_bulk(item_ids)
+        sessions_by_assembly = cls._time_log_rows_bulk(item_ids)
         records = [
-            cls._db_to_app(row, brand_lots=brand_lots_by_assembly.get(str(row["id"]), []))
+            cls._db_to_app(
+                row,
+                brand_lots=brand_lots_by_assembly.get(str(row["id"]), []),
+                session_rows=sessions_by_assembly.get(str(row["id"]), []),
+            )
             for row in rows
         ]
         if brand_id:
