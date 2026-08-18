@@ -7,12 +7,6 @@ import {
   TextArea,
   Label,
   Checkbox,
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
   useToast
 } from '@/components/ui'
 import {
@@ -29,6 +23,7 @@ const EMPTY_CAPSULE_UNIT_WEIGHT_MG = 123
 
 
 interface LoadCheck {
+  date: string
   time: string
   loadLabel: string
   w1Mg: number | string | null
@@ -37,6 +32,11 @@ interface LoadCheck {
   w4Mg: number | string | null
   w5Mg: number | string | null
   avgWeightMg: number | null
+  minWeightMg: number | string | null
+  maxWeightMg: number | string | null
+  sampleCount: number | string | null
+  operatorName: string
+  remarks: string
 }
 
 
@@ -369,6 +369,7 @@ function formatKgValue(value: number | string | null | undefined): string {
 
 function emptyLoadCheck(): LoadCheck {
   return {
+    date: todayInput(),
     time: '',
     loadLabel: '',
     w1Mg: '',
@@ -376,7 +377,12 @@ function emptyLoadCheck(): LoadCheck {
     w3Mg: '',
     w4Mg: '',
     w5Mg: '',
-    avgWeightMg: null
+    avgWeightMg: null,
+    minWeightMg: '',
+    maxWeightMg: '',
+    sampleCount: '',
+    operatorName: '',
+    remarks: ''
   }
 }
 
@@ -454,6 +460,7 @@ function loadChecksFromRecord(record: LocalEncapsulationRecord): LoadCheck[] {
   if (!rows.length) return [emptyLoadCheck()]
 
   return rows.map(row => ({
+    date: formValue(row.date) || todayInput(),
     time: formValue(row.time),
     loadLabel: formValue(row.loadLabel),
     w1Mg: row.w1Mg ?? '',
@@ -461,7 +468,12 @@ function loadChecksFromRecord(record: LocalEncapsulationRecord): LoadCheck[] {
     w3Mg: row.w3Mg ?? '',
     w4Mg: row.w4Mg ?? '',
     w5Mg: row.w5Mg ?? '',
-    avgWeightMg: row.avgWeightMg ?? computeAvg([row.w1Mg ?? null, row.w2Mg ?? null, row.w3Mg ?? null, row.w4Mg ?? null, row.w5Mg ?? null])
+    avgWeightMg: row.avgWeightMg ?? computeAvg([row.w1Mg ?? null, row.w2Mg ?? null, row.w3Mg ?? null, row.w4Mg ?? null, row.w5Mg ?? null]),
+    minWeightMg: row.minWeightMg ?? '',
+    maxWeightMg: row.maxWeightMg ?? '',
+    sampleCount: row.sampleCount ?? '',
+    operatorName: formValue(row.operatorName),
+    remarks: formValue(row.remarks)
   }))
 }
 
@@ -708,6 +720,7 @@ export default function EncapsulationCreatePage() {
 
       const cleanedLoadChecks = loadChecks
         .map(row => ({
+          date: row.date || null,
           time: row.time,
           loadLabel: row.loadLabel,
           w1Mg: numOrNull(row.w1Mg),
@@ -715,7 +728,12 @@ export default function EncapsulationCreatePage() {
           w3Mg: numOrNull(row.w3Mg),
           w4Mg: numOrNull(row.w4Mg),
           w5Mg: numOrNull(row.w5Mg),
-          avgWeightMg: computeAvg([row.w1Mg, row.w2Mg, row.w3Mg, row.w4Mg, row.w5Mg])
+          avgWeightMg: computeAvg([row.w1Mg, row.w2Mg, row.w3Mg, row.w4Mg, row.w5Mg]),
+          minWeightMg: numOrNull(row.minWeightMg),
+          maxWeightMg: numOrNull(row.maxWeightMg),
+          sampleCount: numOrNull(row.sampleCount),
+          operatorName: row.operatorName.trim() || null,
+          remarks: row.remarks.trim() || null
         }))
         .filter(row =>
           row.time ||
@@ -724,7 +742,12 @@ export default function EncapsulationCreatePage() {
           row.w2Mg !== null ||
           row.w3Mg !== null ||
           row.w4Mg !== null ||
-          row.w5Mg !== null
+          row.w5Mg !== null ||
+          row.minWeightMg !== null ||
+          row.maxWeightMg !== null ||
+          row.sampleCount !== null ||
+          row.operatorName ||
+          row.remarks
         )
 
       const temperatureC = numOrNull(form.temperatureC)
@@ -1139,60 +1162,106 @@ export default function EncapsulationCreatePage() {
       </section>
 
       <section className="border-b border-zinc-200 pb-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Encapsulation Load Checks</h2>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Encapsulation Load Checks</h2>
+            <p className="text-sm text-zinc-600">
+              One card per load check - every reading is fully labeled, nothing hides off to the side.
+            </p>
+          </div>
           <Button type="button" variant="subtle" onClick={addLoadCheck}>Add Load</Button>
         </div>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Time</TableHead>
-                <TableHead>Load</TableHead>
-                <TableHead>W1 Mg</TableHead>
-                <TableHead>W2 Mg</TableHead>
-                <TableHead>W3 Mg</TableHead>
-                <TableHead>W4 Mg</TableHead>
-                <TableHead>W5 Mg</TableHead>
-                <TableHead>Avg Mg</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loadChecks.map((row, index) => (
-                <TableRow key={index}>
-                  <TableCell>
-                    <Input
-                      value={row.time}
-                      onChange={event => handleLoadChange(index, 'time', event.target.value)}
+
+        <div className="space-y-3">
+          {loadChecks.map((row, index) => (
+            <div key={index} className="border border-zinc-200 p-4">
+              <div className="grid gap-4 grid-cols-2 lg:grid-cols-[minmax(150px,1fr)_minmax(110px,1fr)_minmax(120px,1fr)_minmax(120px,1fr)_auto]">
+                <div>
+                  <Label>Date</Label>
+                  <Input
+                    type="date"
+                    value={row.date}
+                    onChange={event => handleLoadChange(index, 'date', event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Time</Label>
+                  <Input
+                    type="time"
+                    value={row.time}
+                    onChange={event => handleLoadChange(index, 'time', event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Load</Label>
+                  <Input
+                    value={row.loadLabel}
+                    onChange={event => handleLoadChange(index, 'loadLabel', event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Avg Mg</Label>
+                  <Input value={row.avgWeightMg === null ? '-' : String(row.avgWeightMg)} disabled />
+                </div>
+                <div className="flex items-end">
+                  <Button type="button" variant="danger" onClick={() => removeLoadCheck(index)}>
+                    Delete
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+                {(['w1Mg', 'w2Mg', 'w3Mg', 'w4Mg', 'w5Mg'] as const).map((field, weightIndex) => (
+                  <div key={field}>
+                    <Label>W{weightIndex + 1} Mg</Label>
+                    <NumberInput
+                      value={row[field]?.toString() ?? ''}
+                      onChange={event => handleLoadChange(index, field, event.target.value)}
                     />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      value={row.loadLabel}
-                      onChange={event => handleLoadChange(index, 'loadLabel', event.target.value)}
-                    />
-                  </TableCell>
-                  {(['w1Mg', 'w2Mg', 'w3Mg', 'w4Mg', 'w5Mg'] as const).map(field => (
-                    <TableCell key={field}>
-                      <NumberInput
-                        value={row[field]?.toString() ?? ''}
-                        onChange={event => handleLoadChange(index, field, event.target.value)}
-                      />
-                    </TableCell>
-                  ))}
-                  <TableCell className="font-semibold">
-                    {row.avgWeightMg === null ? '-' : row.avgWeightMg}
-                  </TableCell>
-                  <TableCell>
-                    <Button type="button" variant="danger" size="sm" onClick={() => removeLoadCheck(index)}>
-                      Delete
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-4 grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <Label>Min Weight Mg</Label>
+                  <NumberInput
+                    value={row.minWeightMg?.toString() ?? ''}
+                    onChange={event => handleLoadChange(index, 'minWeightMg', event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Max Weight Mg</Label>
+                  <NumberInput
+                    value={row.maxWeightMg?.toString() ?? ''}
+                    onChange={event => handleLoadChange(index, 'maxWeightMg', event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Sample Count</Label>
+                  <NumberInput
+                    value={row.sampleCount?.toString() ?? ''}
+                    onChange={event => handleLoadChange(index, 'sampleCount', event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Operator Name</Label>
+                  <Input
+                    value={row.operatorName}
+                    onChange={event => handleLoadChange(index, 'operatorName', event.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <Label>Remarks</Label>
+                <Input
+                  value={row.remarks}
+                  onChange={event => handleLoadChange(index, 'remarks', event.target.value)}
+                />
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 
