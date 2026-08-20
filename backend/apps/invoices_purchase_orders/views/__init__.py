@@ -12,7 +12,7 @@ from .request_to_quote import (
     RequestToQuoteListCreateView,
 )
 from .quotes import QuoteDetailView, QuoteListCreateView
-from .invoices import InvoiceDetailView, InvoiceListCreateView
+from .invoices import InvoiceDetailView, InvoiceDoneView, InvoiceListCreateView
 
 __all__ = [
     "VendorDetailView",
@@ -30,5 +30,6 @@ __all__ = [
     "QuoteDetailView",
     "QuoteListCreateView",
     "InvoiceDetailView",
+    "InvoiceDoneView",
     "InvoiceListCreateView",
 ]

@@ -10,7 +10,18 @@ from .numbering import derive_number
 
 # Excludes file_data - list queries never need the full base64 payload for
 # every row, only individual get()/create()/update() responses do.
-LIST_COLUMNS = "id,invoice_number,po_number,brand_id,file_name,file_type,file_size,comments,created_at,updated_at"
+LIST_COLUMNS = (
+    "id,invoice_number,po_number,brand_id,file_name,file_type,file_size,"
+    "comments,status,created_at,updated_at"
+)
+
+# Order types whose PO line items map to a real inventory_items row with a
+# simple running quantity balance - these are what "Done" credits stock for.
+# 'product' is excluded: PO items of that type reference the product
+# catalog (apps.commercial), not a stockable inventory_items row - finished
+# goods are tracked as manufactured batches, not a purchasable quantity.
+# 'custom' is excluded: free-text line items have no item_id to credit.
+STOCK_CREDIT_ORDER_TYPES = {"raw_material", "bottles_lids", "label"}
 
 
 class InvoiceService:
@@ -32,6 +43,7 @@ class InvoiceService:
             "fileType": row.get("file_type"),
             "fileSize": int(row["file_size"]) if row.get("file_size") is not None else None,
             "comments": row.get("comments"),
+            "status": row.get("status") or "draft",
             "createdAt": db.timestamp_ms(row.get("created_at")),
             "updatedAt": db.timestamp_ms(row.get("updated_at")),
         }
@@ -131,11 +143,13 @@ class InvoiceService:
         existing = db.require_row(
             db.one(
                 db.execute(
-                    db.client().table(cls.TABLE).select("id,invoice_number").eq("id", item_id).limit(1)
+                    db.client().table(cls.TABLE).select("id,invoice_number,status").eq("id", item_id).limit(1)
                 )
             ),
             "Invoice not found",
         )
+        if existing.get("status") == "done":
+            raise ServiceError("This invoice is done and can no longer be edited.", 409)
         changes: dict[str, Any] = {}
         if "comments" in payload:
             changes["comments"] = str(payload.get("comments") or "").strip() or None
@@ -157,11 +171,56 @@ class InvoiceService:
 
     @classmethod
     def delete(cls, item_id: str) -> None:
-        db.require_row(
-            db.one(db.execute(db.client().table(cls.TABLE).select("id").eq("id", item_id).limit(1))),
+        existing = db.require_row(
+            db.one(db.execute(db.client().table(cls.TABLE).select("id,status").eq("id", item_id).limit(1))),
             "Invoice not found",
         )
+        if existing.get("status") == "done":
+            raise ServiceError("This invoice is done and can no longer be deleted.", 409)
         db.execute(db.client().table(cls.TABLE).delete().eq("id", item_id))
+
+    # ------------------------------------------------------------------
+    # Done - credits the linked Purchase Order's received quantities into
+    # inventory, then locks the invoice from further edits.
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def mark_done(cls, item_id: str) -> dict[str, Any]:
+        # Local import - po_documents doesn't import invoices, so this
+        # avoids a circular import at module load time.
+        from .po_documents import PODocumentService
+
+        existing = db.require_row(
+            db.one(
+                db.execute(
+                    db.client().table(cls.TABLE).select("*").eq("id", item_id).limit(1)
+                )
+            ),
+            "Invoice not found",
+        )
+        if existing.get("status") == "done":
+            raise ServiceError("This invoice is already marked Done.", 409)
+
+        po = cls._latest_po(str(existing["po_number"]))
+        items = PODocumentService._item_rows(str(po["id"]))
+
+        for item in items:
+            order_type = item.get("order_type") or "raw_material"
+            item_id_ref = item.get("item_id")
+            quantity = db.as_decimal(item.get("quantity"))
+            if order_type not in STOCK_CREDIT_ORDER_TYPES or not item_id_ref or quantity <= 0:
+                continue
+            db.inventory_movement(
+                inventory_item_id=str(item_id_ref),
+                quantity_delta=quantity,
+                movement_type="receive",
+                related_entity_type="invoice",
+                related_entity_id=item_id,
+                reason=f"Received via Invoice {existing.get('invoice_number')}",
+            )
+
+        db.execute(db.client().table(cls.TABLE).update({"status": "done"}).eq("id", item_id))
+        return cls.get(item_id)
 
 
 __all__ = ["InvoiceService"]

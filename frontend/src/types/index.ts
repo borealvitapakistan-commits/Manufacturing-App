@@ -624,6 +624,8 @@ export interface CreateQuoteInput {
   comments?: string | null
 }
 
+export type InvoiceStatus = 'draft' | 'done'
+
 export interface Invoice {
   id: string
   invoiceNumber: string
@@ -634,6 +636,7 @@ export interface Invoice {
   fileType: string | null
   fileSize: number | null
   comments: string | null
+  status: InvoiceStatus
   createdAt: number
   updatedAt: number
 }
@@ -641,4 +644,11 @@ export interface Invoice {
 export interface CreateInvoiceInput {
   poNumber?: string
   comments?: string | null
+}
+
+export interface BottleLidInventory {
+  id: string
+  bottleType: 'capsule' | 'jar'
+  capsuleType: '200' | '250' | '300' | null
+  quantity: number
 }

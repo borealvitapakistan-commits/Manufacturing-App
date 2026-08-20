@@ -11,6 +11,7 @@ import {
   type PODocumentEditorHandle,
   type PODocumentPrintData,
 } from '@/components/purchase-orders/PODocumentEditor'
+import { QuoteFilePreview } from '@/components/purchase-orders/QuoteFilePreview'
 import {
   Badge,
   Button,
@@ -30,12 +31,14 @@ import {
 } from '@/components/ui'
 import {
   deletePODocument,
+  fetchBottleLidInventory,
   fetchBrands,
   fetchLabelInventory,
   fetchPODocument,
   fetchPODocumentHistory,
   fetchPODocuments,
   fetchProducts,
+  fetchQuote,
   fetchQuotes,
   fetchRawMaterials,
   fetchRequestToQuoteDocuments,
@@ -46,6 +49,7 @@ import {
 } from '@/lib/supabase/data'
 import { formatDate } from '@/lib/utils'
 import type {
+  BottleLidInventory,
   Brand,
   CreatePODocumentInput,
   LabelInventory,
@@ -92,6 +96,7 @@ export default function PurchaseOrdersPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([])
   const [labels, setLabels] = useState<LabelInventory[]>([])
+  const [bottlesLids, setBottlesLids] = useState<BottleLidInventory[]>([])
   const [rtqDocs, setRtqDocs] = useState<RequestToQuoteDocument[]>([])
   const [quotes, setQuotes] = useState<Quote[]>([])
 
@@ -102,9 +107,22 @@ export default function PurchaseOrdersPage() {
   const [vendorFilter, setVendorFilter] = useState('')
   const [editingDoc, setEditingDoc] = useState<PODocument | null | 'new'>(null)
   const [editingReadOnly, setEditingReadOnly] = useState(false)
+  // Opened via the list's "Receive" action - see PODocumentEditor's
+  // receivingMode prop for what this changes about the form.
+  const [receivingMode, setReceivingMode] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<PODocument | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [receiveTarget, setReceiveTarget] = useState<PODocument | null>(null)
   const [pdfLoading, setPdfLoading] = useState(false)
+
+  // ── Quote / PO split view ─────────────────────────────────────────────────
+  // linkedQuoteNumber comes from the RTQ picker while creating a new PO;
+  // once a PO is saved (or opened for edit), its own quoteNumber takes over.
+  const [linkedQuoteNumber, setLinkedQuoteNumber] = useState<string | null>(null)
+  const [linkedQuote, setLinkedQuote] = useState<Quote | null>(null)
+  const [quotePanelCollapsed, setQuotePanelCollapsed] = useState(false)
+  // The PO panel's own zoom, independent from the Quote panel's zoom.
+  const [poZoom, setPoZoom] = useState(1)
 
   // ── Version history (expand/collapse per PO number) ──────────────────────────
   const [expandedNumbers, setExpandedNumbers] = useState<Set<string>>(new Set())
@@ -122,6 +140,7 @@ export default function PurchaseOrdersPage() {
     const openDoc = (location.state as { openDoc?: PODocument } | null)?.openDoc
     if (openDoc) {
       setEditingReadOnly(false)
+      setReceivingMode(false)
       setEditingDoc(openDoc)
       window.history.replaceState({}, '')
     }
@@ -133,13 +152,14 @@ export default function PurchaseOrdersPage() {
       setLoading(true)
       setError('')
       await initSupabase()
-      const [docList, vendorList, brandList, productList, materialList, labelList, rtqList, quoteList] = await Promise.all([
+      const [docList, vendorList, brandList, productList, materialList, labelList, bottleLidList, rtqList, quoteList] = await Promise.all([
         fetchPODocuments({ limit: 200 }),
         fetchVendors(),
         fetchBrands(),
         fetchProducts(),
         fetchRawMaterials(),
         fetchLabelInventory(),
+        fetchBottleLidInventory(),
         fetchRequestToQuoteDocuments({ limit: 500 }),
         fetchQuotes({ limit: 500 }),
       ])
@@ -149,6 +169,7 @@ export default function PurchaseOrdersPage() {
       setProducts(productList as Product[])
       setRawMaterials(materialList as RawMaterial[])
       setLabels(labelList as LabelInventory[])
+      setBottlesLids(bottleLidList)
       setRtqDocs(rtqList)
       setQuotes(quoteList)
     } catch (err) {
@@ -167,11 +188,14 @@ export default function PurchaseOrdersPage() {
         saved = await savePOPaymentProof(saved.id, paymentProofFile)
       }
       showToast({
-        message: input.id ? `${saved.poNumber} — new version saved (v${saved.version})` : `PO ${saved.poNumber} created`,
+        message: saved.status === 'received'
+          ? `${saved.poNumber} marked as Received — no longer editable`
+          : input.id ? `${saved.poNumber} — new version saved (v${saved.version})` : `PO ${saved.poNumber} created`,
         type: 'success',
       })
       setEditingDoc(saved)
-      setEditingReadOnly(false)
+      setEditingReadOnly(saved.status === 'received')
+      setReceivingMode(false)
       // The cached history for this PO number is now stale (missing the
       // version we just saved) - clear it so re-expanding refetches.
       setHistoryByNumber(prev => {
@@ -207,6 +231,7 @@ export default function PurchaseOrdersPage() {
       setDeleteTarget(null)
       if (editingDoc && editingDoc !== 'new' && editingDoc.poNumber === deleteTarget.poNumber) {
         setEditingDoc(null)
+        setReceivingMode(false)
       }
       showToast({ message: 'PO document deleted', type: 'success' })
     } catch (err) {
@@ -217,10 +242,19 @@ export default function PurchaseOrdersPage() {
     }
   }
 
+  // Confirmed from the "Mark as Received?" dialog - hands off to the
+  // editor's imperative handle, since it owns the current form state
+  // (vendor/items/prices) that handleSave's payload needs.
+  async function handleConfirmReceive() {
+    await editorRef.current?.submitReceive()
+    setReceiveTarget(null)
+  }
+
   // ── Version history ───────────────────────────────────────────────────────
 
-  async function openVersion(doc: PODocument, readOnly: boolean) {
+  async function openVersion(doc: PODocument, readOnly: boolean, receiving = false) {
     setEditingReadOnly(readOnly)
+    setReceivingMode(receiving)
     setEditingDoc(doc)
     // History rows omit the (potentially large) Payment Proof file content -
     // fetch the full record so its download link is available once opened.
@@ -591,6 +625,56 @@ export default function PurchaseOrdersPage() {
 
   const docObj = editingDoc === 'new' ? null : editingDoc
 
+  // A fresh RTQ-picker selection (new PO) always wins over whatever quote an
+  // already-saved doc carries; opening a different doc/session clears it.
+  const activeQuoteNumber = linkedQuoteNumber ?? docObj?.quoteNumber ?? null
+
+  useEffect(() => {
+    setLinkedQuoteNumber(null)
+    setQuotePanelCollapsed(false)
+    setPoZoom(1)
+  }, [editingDoc])
+
+  useEffect(() => {
+    if (!activeQuoteNumber) {
+      setLinkedQuote(null)
+      return
+    }
+    const match = quotes.find(q => q.quoteNumber === activeQuoteNumber)
+    if (!match) {
+      setLinkedQuote(null)
+      return
+    }
+    let cancelled = false
+    fetchQuote(match.id)
+      .then(full => { if (!cancelled && full) setLinkedQuote(full) })
+      .catch(err => console.error('Failed to load linked Quote file:', err))
+    return () => { cancelled = true }
+  }, [activeQuoteNumber, quotes])
+
+  const poEditorElement = (
+    <PODocumentEditor
+      ref={editorRef}
+      doc={docObj}
+      vendors={vendors}
+      brands={brands}
+      rawMaterials={rawMaterials}
+      products={products}
+      labels={labels}
+      bottlesLids={bottlesLids}
+      eligibleRtqs={eligibleRtqs}
+      saving={saving}
+      readOnly={editingReadOnly}
+      receivingMode={receivingMode}
+      onSave={handleSave}
+      onDelete={docObj && !editingReadOnly ? () => setDeleteTarget(docObj) : undefined}
+      onReceive={docObj ? () => setReceiveTarget(docObj) : undefined}
+      onBack={() => { setEditingDoc(null); setEditingReadOnly(false); setReceivingMode(false) }}
+      printRef={printRef}
+      onLinkedQuoteChange={setLinkedQuoteNumber}
+    />
+  )
+
   return (
     <div className="space-y-6">
       <div>
@@ -606,14 +690,14 @@ export default function PurchaseOrdersPage() {
         <button
           type="button"
           className={viewButtonClass(editingDoc === null)}
-          onClick={() => { setEditingDoc(null); setEditingReadOnly(false) }}
+          onClick={() => { setEditingDoc(null); setEditingReadOnly(false); setReceivingMode(false) }}
         >
           Purchase Orders
         </button>
         <button
           type="button"
           className={viewButtonClass(editingDoc !== null)}
-          onClick={() => { setEditingDoc('new'); setEditingReadOnly(false) }}
+          onClick={() => { setEditingDoc('new'); setEditingReadOnly(false); setReceivingMode(false) }}
         >
           Create Purchase Order
         </button>
@@ -652,25 +736,97 @@ export default function PurchaseOrdersPage() {
                 </svg>
                 {pdfLoading ? 'Generating…' : 'Download PDF'}
               </button>
+              {/* PO panel's own zoom - independent from the Quote panel's zoom */}
+              <div className="flex items-center gap-0.5 rounded border border-zinc-300 bg-white px-1 py-1">
+                <button
+                  type="button"
+                  onClick={() => setPoZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2)))}
+                  disabled={poZoom <= 0.3}
+                  title="Zoom out PO"
+                  className="rounded px-2 py-0.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-30"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoZoom(1)}
+                  title="Reset PO zoom"
+                  className="min-w-[3.25rem] rounded px-1 py-0.5 text-center text-xs text-zinc-600 hover:bg-zinc-100"
+                >
+                  {Math.round(poZoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoZoom(z => Math.min(3, +(z + 0.1).toFixed(2)))}
+                  disabled={poZoom >= 3}
+                  title="Zoom in PO"
+                  className="rounded px-2 py-0.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-30"
+                >
+                  +
+                </button>
+              </div>
+              {linkedQuote && (
+                <button
+                  type="button"
+                  onClick={() => setQuotePanelCollapsed(prev => !prev)}
+                  className="flex items-center gap-1.5 rounded border border-[#1D838D] bg-white px-3 py-1.5 text-sm text-[#1D838D] hover:bg-[#e0f7fa] transition-colors"
+                >
+                  {quotePanelCollapsed ? `Show Quote (${linkedQuote.quoteNumber})` : 'Hide Quote'}
+                </button>
+              )}
             </div>
           </div>
 
-          <PODocumentEditor
-            ref={editorRef}
-            doc={docObj}
-            vendors={vendors}
-            brands={brands}
-            rawMaterials={rawMaterials}
-            products={products}
-            labels={labels}
-            eligibleRtqs={eligibleRtqs}
-            saving={saving}
-            readOnly={editingReadOnly}
-            onSave={handleSave}
-            onDelete={docObj && !editingReadOnly ? () => setDeleteTarget(docObj) : undefined}
-            onBack={() => { setEditingDoc(null); setEditingReadOnly(false) }}
-            printRef={printRef}
-          />
+          {/*
+            The three panels below (quote shell, splitter, editor) are always
+            present in the same order - only their CSS width/content changes
+            based on state. Conditionally mounting/unmounting siblings here
+            would shift the editor's position in the tree and React would
+            remount PODocumentEditor (losing its in-progress RTQ selection
+            and form state) exactly when a Quote gets linked.
+          */}
+          <div
+            className={linkedQuote ? 'flex border border-zinc-200 print:border-none' : 'flex'}
+            // A fixed (not min-) height, so each panel's own overflow-auto
+            // actually clips and scrolls internally - the Quote panel's
+            // zoom/hand-tool controls need a bounded box to pan within,
+            // otherwise the row just grows with zoomed content and the
+            // whole page scrolls instead.
+            style={linkedQuote ? { height: 760 } : undefined}
+          >
+            <div
+              className={`flex shrink-0 flex-col overflow-hidden bg-zinc-50 transition-[width] duration-150 print:hidden ${
+                linkedQuote && !quotePanelCollapsed ? 'w-[42%] border-r border-zinc-200' : 'w-0'
+              }`}
+            >
+              {linkedQuote && (
+                <>
+                  <div className="whitespace-nowrap border-b border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700">
+                    Quote — {linkedQuote.quoteNumber}
+                  </div>
+                  {/* QuoteFilePreview owns its own scroll region (it has an
+                      internal zoom/hand-tool toolbar above it), so this
+                      shell only clips - it doesn't scroll. */}
+                  <div className="flex-1 overflow-hidden">
+                    <QuoteFilePreview quote={linkedQuote} />
+                  </div>
+                </>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setQuotePanelCollapsed(prev => !prev)}
+              title={quotePanelCollapsed ? 'Show Quote panel' : 'Collapse Quote panel'}
+              className={`group flex shrink-0 items-center justify-center bg-zinc-100 transition-colors hover:bg-zinc-200 print:hidden ${
+                linkedQuote ? 'w-4 border-r border-zinc-200' : 'w-0 overflow-hidden'
+              }`}
+            >
+              <span className="text-zinc-400 group-hover:text-zinc-700">{quotePanelCollapsed ? '›' : '‹'}</span>
+            </button>
+            <div className="flex-1 overflow-auto">
+              <div style={{ zoom: poZoom }}>{poEditorElement}</div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -754,54 +910,91 @@ export default function PurchaseOrdersPage() {
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {(historyByNumber[doc.poNumber] ?? []).map(version => (
-                                    <TableRow
-                                      key={version.id}
-                                      clickable
-                                      onClick={() => openVersion(version, !version.isLatest)}
-                                    >
-                                      <TableCell className="font-mono font-semibold">
-                                        {version.poNumber}
-                                        {version.isLatest && (
-                                          <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                                            Latest
-                                          </span>
-                                        )}
-                                      </TableCell>
-                                      <TableCell>{version.poDate}</TableCell>
-                                      <TableCell>{version.vendorName || '—'}</TableCell>
-                                      <TableCell>{version.items.length}</TableCell>
-                                      <TableCell>${version.grandTotal.toFixed(2)}</TableCell>
-                                      <TableCell>
-                                        <Badge variant={statusVariant(version.status)}>{STATUS_LABELS[version.status]}</Badge>
-                                      </TableCell>
-                                      <TableCell>{formatDate(version.createdAt)}</TableCell>
-                                      <TableCell>
-                                        <div className="flex gap-2">
-                                          <Button
-                                            variant="subtle"
-                                            size="sm"
-                                            onClick={(event) => {
-                                              event.stopPropagation()
-                                              openVersion(version, !version.isLatest)
-                                            }}
-                                          >
-                                            {version.isLatest ? 'Edit' : 'View'}
-                                          </Button>
-                                          <Button
-                                            variant="danger"
-                                            size="sm"
-                                            onClick={(event) => {
-                                              event.stopPropagation()
-                                              setDeleteTarget(version)
-                                            }}
-                                          >
-                                            Delete
-                                          </Button>
-                                        </div>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
+                                  {(() => {
+                                    const versions = historyByNumber[doc.poNumber] ?? []
+                                    // Once the latest version is Received or Approved, the whole
+                                    // po_number is locked - historical rows can't be edited/deleted
+                                    // either, since delete() removes the entire version chain.
+                                    const poLocked = versions.some(
+                                      v => v.isLatest && (v.status === 'received' || v.status === 'approved')
+                                    )
+                                    return versions.map(version => {
+                                      const viewOnly = poLocked || !version.isLatest
+                                      return (
+                                        <TableRow
+                                          key={version.id}
+                                          clickable
+                                          onClick={() => openVersion(version, viewOnly)}
+                                        >
+                                          <TableCell className="font-mono font-semibold">
+                                            {version.poNumber}
+                                            {version.isLatest && (
+                                              <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                                Latest
+                                              </span>
+                                            )}
+                                          </TableCell>
+                                          <TableCell>{version.poDate}</TableCell>
+                                          <TableCell>{version.vendorName || '—'}</TableCell>
+                                          <TableCell>{version.items.length}</TableCell>
+                                          <TableCell>${version.grandTotal.toFixed(2)}</TableCell>
+                                          <TableCell>
+                                            <Badge variant={statusVariant(version.status)}>{STATUS_LABELS[version.status]}</Badge>
+                                          </TableCell>
+                                          <TableCell>{formatDate(version.createdAt)}</TableCell>
+                                          <TableCell>
+                                            <div className="flex gap-2">
+                                              {viewOnly ? (
+                                                <Button
+                                                  variant="subtle"
+                                                  size="sm"
+                                                  onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    openVersion(version, true)
+                                                  }}
+                                                >
+                                                  View
+                                                </Button>
+                                              ) : (
+                                                <>
+                                                  <Button
+                                                    variant="subtle"
+                                                    size="sm"
+                                                    onClick={(event) => {
+                                                      event.stopPropagation()
+                                                      openVersion(version, false)
+                                                    }}
+                                                  >
+                                                    Edit
+                                                  </Button>
+                                                  <Button
+                                                    variant="subtle"
+                                                    size="sm"
+                                                    onClick={(event) => {
+                                                      event.stopPropagation()
+                                                      openVersion(version, false, true)
+                                                    }}
+                                                  >
+                                                    Receive
+                                                  </Button>
+                                                  <Button
+                                                    variant="danger"
+                                                    size="sm"
+                                                    onClick={(event) => {
+                                                      event.stopPropagation()
+                                                      setDeleteTarget(version)
+                                                    }}
+                                                  >
+                                                    Delete
+                                                  </Button>
+                                                </>
+                                              )}
+                                            </div>
+                                          </TableCell>
+                                        </TableRow>
+                                      )
+                                    })
+                                  })()}
                                 </TableBody>
                               </Table>
                             )}
@@ -826,6 +1019,16 @@ export default function PurchaseOrdersPage() {
         confirmLabel="Delete"
         variant="danger"
         loading={deleting}
+      />
+
+      <ConfirmDialog
+        open={!!receiveTarget}
+        onClose={() => setReceiveTarget(null)}
+        onConfirm={handleConfirmReceive}
+        title="Mark as Received?"
+        description={`Mark ${receiveTarget?.poNumber} as Received? It will become read-only — no longer editable or deletable.`}
+        confirmLabel="Receive"
+        loading={saving}
       />
 
     </div>

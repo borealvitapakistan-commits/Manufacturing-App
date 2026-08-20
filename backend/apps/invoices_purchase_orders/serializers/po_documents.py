@@ -30,6 +30,7 @@ class PODocumentSerializer(serializers.Serializer):
     poDate = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     termsConditions = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     status = serializers.ChoiceField(choices=PO_STATUSES, required=False, default="draft")
+    rtqNumber = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     gstPercent = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=0, required=False)
     othersValue = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0, required=False)
     shippingValue = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0, required=False)

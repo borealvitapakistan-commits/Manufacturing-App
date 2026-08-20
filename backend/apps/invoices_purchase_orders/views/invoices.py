@@ -43,4 +43,10 @@ class InvoiceDetailView(APIView):
         return Response({"data": {"success": True}})
 
 
-__all__ = ["InvoiceListCreateView", "InvoiceDetailView"]
+class InvoiceDoneView(APIView):
+    def post(self, request, item_id):
+        data = InvoiceService.mark_done(str(item_id))
+        return Response({"data": data})
+
+
+__all__ = ["InvoiceDetailView", "InvoiceDoneView", "InvoiceListCreateView"]

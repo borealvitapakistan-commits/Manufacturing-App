@@ -329,7 +329,24 @@ class PODocumentService:
             # BOR-RTQ-004 -> BOR-PO-004 - rather than an independent
             # sequence. Ad-hoc POs (no rtq_number) keep the independent
             # per-brand sequence assigned by the assign_po_number() trigger.
-            header["po_number"] = derive_number(rtq_number, "RTQ", "PO", label="Purchase Order")
+            derived_po_number = derive_number(rtq_number, "RTQ", "PO", label="Purchase Order")
+            conflict = db.one(
+                db.execute(
+                    db.client()
+                    .table(cls.TABLE)
+                    .select("id")
+                    .eq("po_number", derived_po_number)
+                    .limit(1)
+                )
+            )
+            if conflict:
+                raise ServiceError(
+                    f"Purchase order number {derived_po_number} is already in use by "
+                    "another PO. Rename or delete that PO before creating one from "
+                    f"{rtq_number}.",
+                    409,
+                )
+            header["po_number"] = derived_po_number
 
         if not header.get("brand_id"):
             raise ServiceError(
@@ -381,9 +398,9 @@ class PODocumentService:
             ),
             "Purchase order not found",
         )
-        if existing.get("status") == "approved":
+        if existing.get("status") in ("approved", "received"):
             raise ServiceError(
-                "This purchase order is approved and can no longer be edited.", 409
+                f"This purchase order is {existing['status']} and can no longer be edited.", 409
             )
 
         po_number = existing.get("po_number")
@@ -511,6 +528,20 @@ class PODocumentService:
             ),
             "Purchase order not found",
         )
+        latest = db.one(
+            db.execute(
+                db.client()
+                .table(cls.TABLE)
+                .select("status")
+                .eq("po_number", existing["po_number"])
+                .order("version", desc=True)
+                .limit(1)
+            )
+        )
+        if latest and latest.get("status") in ("approved", "received"):
+            raise ServiceError(
+                f"This purchase order is {latest['status']} and can no longer be deleted.", 409
+            )
         db.execute(db.client().table(cls.TABLE).delete().eq("po_number", existing["po_number"]))
         return None
 

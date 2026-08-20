@@ -8,12 +8,14 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type {
+  BottleLidInventory,
   Brand,
   CreatePODocumentInput,
   LabelInventory,
   PODocument,
   PODocumentItem,
   PODocumentItemType,
+  PODocumentStatus,
   Product,
   RawMaterial,
   RequestToQuoteDocument,
@@ -184,6 +186,13 @@ interface LineItemRowProps {
   rawMaterials: RawMaterial[]
   products: Product[]
   labels: LabelInventory[]
+  bottlesLids: BottleLidInventory[]
+  // When true (opened via the list's "Receive" action) Total Price is a
+  // directly-editable field reflecting what was actually invoiced, instead
+  // of being auto-computed from Qty x Unit price - the whole point of this
+  // mode is recording the real received numbers without the app silently
+  // overwriting them.
+  receivingMode: boolean
   onChange: (updated: PODocumentItem) => void
   onDelete: () => void
 }
@@ -196,11 +205,16 @@ const ORDER_TYPE_LABELS: Record<PODocumentItemType, string> = {
   custom: 'Custom',
 }
 
-function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, onChange, onDelete }: LineItemRowProps) {
+function bottleLidLabel(entry: BottleLidInventory): string {
+  return entry.bottleType === 'capsule' ? `Capsule ${entry.capsuleType} bottle` : 'Jar'
+}
+
+function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, bottlesLids, receivingMode, onChange, onDelete }: LineItemRowProps) {
   function set(patch: Partial<PODocumentItem>) {
     const updated = { ...item, ...patch }
-    // auto-calc total
-    if (patch.quantity !== undefined || patch.unitPrice !== undefined) {
+    // auto-calc total - skipped in receiving mode, where Total price is
+    // manually entered to match the real invoice instead.
+    if (!receivingMode && (patch.quantity !== undefined || patch.unitPrice !== undefined)) {
       const q = patch.quantity !== undefined ? patch.quantity : item.quantity
       const u = patch.unitPrice !== undefined ? patch.unitPrice : item.unitPrice
       updated.totalPrice = (q != null && u != null) ? q * u : null
@@ -222,6 +236,9 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
     } else if (item.orderType === 'label') {
       const l = labels.find(x => x.id === id)
       name = l ? `${l.brandName} - ${l.productName} - ${l.labelName}` : ''
+    } else if (item.orderType === 'bottles_lids') {
+      const b = bottlesLids.find(x => x.id === id)
+      name = b ? bottleLidLabel(b) : ''
     }
     set({ itemId: id, itemName: name })
   }
@@ -279,9 +296,20 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
               {labels.map(l => <option key={l.id} value={l.id}>{l.brandName} – {l.productName} – {l.labelName}</option>)}
             </select>
           )}
+          {item.orderType === 'bottles_lids' && (
+            <select
+              value={item.itemId ?? ''}
+              onChange={e => handleItemSelect(e.target.value)}
+              className="text-sm border border-zinc-200 rounded px-1 py-0.5 print:hidden"
+              style={{ borderColor: item.itemId ? accentColor : undefined }}
+            >
+              <option value="">Select bottle/lid…</option>
+              {bottlesLids.map(b => <option key={b.id} value={b.id}>{bottleLidLabel(b)}</option>)}
+            </select>
+          )}
 
           {/* editable name (always visible, shown on print) */}
-          {(item.orderType === 'custom' || item.orderType === 'bottles_lids') ? (
+          {item.orderType === 'custom' ? (
             <input
               value={item.itemName}
               onChange={e => set({ itemName: e.target.value })}
@@ -322,9 +350,23 @@ function LineItemRow({ item, sr, accentColor, rawMaterials, products, labels, on
         />
       </td>
 
-      {/* Total price */}
+      {/* Total price - editable manual entry in receiving mode, otherwise
+          the auto-calculated (read-only) Qty x Unit price */}
       <td className="py-2 px-2 text-right w-36 font-medium text-sm print:py-1">
-        {total != null ? total.toFixed(2) : '—'}
+        {receivingMode ? (
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={item.totalPrice ?? ''}
+            onChange={e => set({ totalPrice: e.target.value ? parseFloat(e.target.value) : null })}
+            className="w-full text-right text-sm border-b border-zinc-200 focus:outline-none focus:border-current px-1 py-0.5"
+            style={{ borderColor: accentColor }}
+            placeholder="0.00"
+          />
+        ) : (
+          total != null ? total.toFixed(2) : '—'
+        )}
       </td>
 
       {/* Delete — hidden on print */}
@@ -351,16 +393,27 @@ export interface PODocumentEditorProps {
   rawMaterials: RawMaterial[]
   products: Product[]
   labels: LabelInventory[]
+  bottlesLids: BottleLidInventory[]
   // Request to Quotes that already have a Quote attached and haven't been
   // used for a Purchase Order yet - the only ones eligible to link a new PO
   // to, each carrying its Quote's number for display.
   eligibleRtqs: Array<RequestToQuoteDocument & { quoteNumber: string }>
   saving: boolean
   readOnly?: boolean
+  // Opened via the list's "Receive" action - fields stay editable but Total
+  // price is manual entry instead of auto-calculated (see LineItemRow).
+  receivingMode?: boolean
   onSave: (input: CreatePODocumentInput, paymentProofFile?: File | null) => Promise<void>
   onDelete?: () => void
+  // Fires when the toolbar's "Receive" button is clicked - the parent shows
+  // a confirmation, then calls the ref's submitReceive() to actually save.
+  onReceive?: () => void
   onBack: () => void
   printRef: React.RefObject<HTMLDivElement>
+  // Fires whenever the Quote linked to this PO changes (picking an RTQ in
+  // create mode, or simply because an existing PO already has one) - lets
+  // the parent page show that Quote's file alongside the editor.
+  onLinkedQuoteChange?: (quoteNumber: string | null) => void
 }
 
 export interface PODocumentPrintData {
@@ -390,6 +443,9 @@ export interface PODocumentPrintData {
 
 export interface PODocumentEditorHandle {
   getPrintData: () => PODocumentPrintData
+  // Saves the current form state with status forced to 'received' - called
+  // by the parent page after the user confirms the "Receive" dialog.
+  submitReceive: () => Promise<void>
 }
 
 function emptyItem(sr: number): PODocumentItem {
@@ -413,13 +469,17 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   rawMaterials,
   products,
   labels,
+  bottlesLids,
   eligibleRtqs,
   saving,
   readOnly = false,
+  receivingMode = false,
   onSave,
   onDelete,
+  onReceive,
   onBack,
   printRef,
+  onLinkedQuoteChange,
 }: PODocumentEditorProps, ref) {
   function formatBrandAddress(brand: Brand | null | undefined, separator: ', ' | '\n' = ', ') {
     if (!brand) return ''
@@ -456,6 +516,10 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   const linkedQuoteNumber = doc?.quoteNumber
     ?? eligibleRtqs.find(r => r.rtqNumber === linkedRtqNumber)?.quoteNumber
     ?? ''
+
+  useEffect(() => {
+    onLinkedQuoteChange?.(linkedQuoteNumber || null)
+  }, [linkedQuoteNumber, onLinkedQuoteChange])
 
   // Selecting a Request to Quote auto-fills vendor/brand/ship-to/items from
   // it - the same field copy the old RTQ "Approve" flow used to do - since a
@@ -538,7 +602,44 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
   // dollar amounts added directly (e.g. subtotal 40 + shipping 90 = 130).
   const grandTotal = subtotal + (subtotal * (gstPercent || 0)) / 100 + (othersValue || 0) + (shippingValue || 0)
 
+  const buildSavePayload = useCallback((statusOverride?: PODocumentStatus): CreatePODocumentInput => ({
+    id: doc?.id,
+    vendorId: vendorId || null,
+    vendorName: selectedVendor?.name ?? '',
+    vendorAddress: vendorAddress || null,
+    shipToName,
+    shipToAddress: shipToAddress || null,
+    shipToPhone: shipToPhone || null,
+    brandId: brandId || null,
+    poDate,
+    termsConditions: termsConditions || null,
+    status: statusOverride ?? doc?.status ?? 'draft',
+    rtqNumber: doc?.rtqNumber ?? linkedRtqNumber ?? null,
+    gstPercent,
+    othersValue,
+    shippingValue,
+    items: items.map((item, idx) => ({
+      id: item.id?.startsWith('new-') ? undefined : item.id,
+      sr: idx + 1,
+      orderType: item.orderType,
+      itemId: item.itemId ?? null,
+      itemName: item.itemName,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice ?? null,
+      totalPrice: item.totalPrice ?? null,
+    })),
+  }), [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, linkedRtqNumber, gstPercent, othersValue, shippingValue, items])
+
+  const handleSave = useCallback(async () => {
+    await onSave(buildSavePayload(), paymentProofFile)
+  }, [buildSavePayload, paymentProofFile, onSave])
+
+  const handleReceive = useCallback(async () => {
+    await onSave(buildSavePayload('received'), paymentProofFile)
+  }, [buildSavePayload, paymentProofFile, onSave])
+
   useImperativeHandle(ref, () => ({
+    submitReceive: handleReceive,
     getPrintData: () => ({
       poNumber: doc?.poNumber ?? 'Draft PO',
       poDate,
@@ -572,6 +673,7 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     documentLogoUrl,
     gstPercent,
     grandTotal,
+    handleReceive,
     items,
     othersValue,
     poDate,
@@ -584,36 +686,6 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
     termsConditions,
     vendorAddress,
   ])
-
-  const handleSave = useCallback(async () => {
-    await onSave({
-      id: doc?.id,
-      vendorId: vendorId || null,
-      vendorName: selectedVendor?.name ?? '',
-      vendorAddress: vendorAddress || null,
-      shipToName,
-      shipToAddress: shipToAddress || null,
-      shipToPhone: shipToPhone || null,
-      brandId: brandId || null,
-      poDate,
-      termsConditions: termsConditions || null,
-      status: doc?.status ?? 'draft',
-      rtqNumber: doc?.rtqNumber ?? linkedRtqNumber ?? null,
-      gstPercent,
-      othersValue,
-      shippingValue,
-      items: items.map((item, idx) => ({
-        id: item.id?.startsWith('new-') ? undefined : item.id,
-        sr: idx + 1,
-        orderType: item.orderType,
-        itemId: item.itemId ?? null,
-        itemName: item.itemName,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice ?? null,
-        totalPrice: item.totalPrice ?? null,
-      })),
-    }, paymentProofFile)
-  }, [doc, vendorId, selectedVendor, vendorAddress, shipToName, shipToAddress, shipToPhone, brandId, poDate, termsConditions, linkedRtqNumber, gstPercent, othersValue, shippingValue, items, paymentProofFile, onSave])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -654,7 +726,9 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
 
           {readOnly ? (
             <span className="rounded bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-500">
-              {doc?.status === 'approved' ? 'Approved — read-only' : 'Read-only — historical version'}
+              {doc?.status === 'received'
+                ? 'Received — read-only'
+                : doc?.status === 'approved' ? 'Approved — read-only' : 'Read-only — historical version'}
             </span>
           ) : (
             <>
@@ -670,9 +744,10 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
               {doc && (
                 <button
                   type="button"
+                  onClick={() => onReceive?.()}
                   className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 transition-colors"
                 >
-                  Sent
+                  Receive
                 </button>
               )}
               <button
@@ -847,6 +922,8 @@ export const PODocumentEditor = forwardRef<PODocumentEditorHandle, PODocumentEdi
                   rawMaterials={rawMaterials}
                   products={products}
                   labels={labels}
+                  bottlesLids={bottlesLids}
+                  receivingMode={receivingMode}
                   onChange={updated => updateItem(idx, updated)}
                   onDelete={() => deleteItem(idx)}
                 />

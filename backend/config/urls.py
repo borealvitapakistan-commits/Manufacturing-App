@@ -46,6 +46,7 @@ from apps.inventory.views import (
 )
 from apps.invoices_purchase_orders.views import (
     InvoiceDetailView,
+    InvoiceDoneView,
     InvoiceListCreateView,
     PODocumentDetailView,
     PODocumentHistoryView,
@@ -365,5 +366,10 @@ urlpatterns = [
         "api/invoices/<uuid:item_id>/",
         InvoiceDetailView.as_view(),
         name="invoice-detail",
+    ),
+    path(
+        "api/invoices/<uuid:item_id>/done/",
+        InvoiceDoneView.as_view(),
+        name="invoice-done",
     ),
 ]

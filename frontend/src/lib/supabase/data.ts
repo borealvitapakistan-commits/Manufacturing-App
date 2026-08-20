@@ -2,6 +2,7 @@
 // Despite this legacy import path, every operation goes through Django.
 
 import type {
+  BottleLidInventory,
   CreateInvoiceInput,
   CreatePODocumentInput,
   CreatePurchaseOrderInput,
@@ -173,9 +174,9 @@ export async function deleteLabelInventory(id: string) {
 export async function fetchBottleLidInventory(options?: {
   bottleType?: string
   capsuleType?: string
-}) {
+}): Promise<BottleLidInventory[]> {
   return unwrap(
-    await api.get<Data<AnyRecord[]>>(
+    await api.get<Data<BottleLidInventory[]>>(
       `/bottles-lids${query({ ...options, limit: 500 })}`
     )
   )
@@ -707,6 +708,12 @@ export async function saveInvoice(
 
 export async function deleteInvoice(id: string) {
   await api.delete(`/invoices/${id}`)
+}
+
+// Marks an Invoice Done - credits its linked PO's received quantities into
+// inventory (raw materials, bottles/lids, labels) and locks the invoice.
+export async function markInvoiceDone(id: string): Promise<Invoice> {
+  return unwrap(await api.post<Data<Invoice>>(`/invoices/${id}/done`, {}))
 }
 
 export async function fetchCompanySettings() {
